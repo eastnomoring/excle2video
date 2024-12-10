@@ -21,6 +21,12 @@ from datetime import datetime
 from Draft import Draft
 from material import Material
 
+# 设置 Ollama HTTP API 的 URL
+OLLAMA_URL = "http://localhost:11434/api/generate"
+# 全局变量，用于记录当前是否使用本地模型
+use_local_model = False
+local_model_process = None
+
 # 全局变量用于存储novel_id
 global_novel_id = None
 
@@ -216,6 +222,54 @@ positive_words_prompts = [
 
 negative_prompts = "EasyNegative,(nsfw:1.5),verybadimagenegative_v1.3, ng_deepnegative_v1_75t, (ugly face:0.8),cross-eyed,sketches, (worst quality:2), (low quality:2), (normal quality:2), lowres, normal quality, ((monochrome)), ((grayscale)), skin spots, acnes, skin blemishes, bad anatomy, DeepNegative, facing away, tilted head, Multiple people, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worstquality, low quality, normal quality, jpegartifacts, signature, watermark, username, blurry, bad feet, cropped, poorly drawn hands, poorly drawn face, mutation, deformed, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, extra fingers, fewer digits, extra limbs, extra arms,extra legs, malformed limbs, fused fingers, too many fingers, long neck, cross-eyed,mutated hands, polar lowres, bad body, bad proportions, gross proportions, text, error, missing fingers, missing arms, missing legs, extra digit, extra arms, extra leg, extra foot, ((repeating hair))"
 
+def toggle_model_usage():
+    """切换模型使用模式"""
+    global use_local_model
+    use_local_model = not use_local_model
+    model_status_label.config(
+        text=f"当前模型: {'本地模型 (Ollama)' if use_local_model else 'OpenAI API'}"
+    )
+
+def close_local_model():
+    """关闭本地模型进程"""
+    global local_model_process
+    if local_model_process:
+        local_model_process.terminate()
+        local_model_process = None
+
+
+def chat_with_local_model(prompt, model_name="qwen2.5:7b"):
+    try:
+        # 请求体
+        payload = {"model": model_name, "prompt": prompt}
+
+        # 发送 POST 请求，启用流模式
+        response = requests.post(OLLAMA_URL, json=payload, timeout=30, stream=True)
+        response.raise_for_status()  # 如果HTTP错误，抛出异常
+
+        # 逐行解析响应数据
+        result_content = []
+        for line in response.iter_lines():
+            if line.strip():  # 跳过空行
+                try:
+                    json_data = json.loads(line.decode("utf-8"))
+                    result_content.append(json_data.get("response", ""))
+
+                    # 如果是结束标志，停止处理
+                    if json_data.get("done", False):
+                        break
+                except json.JSONDecodeError:
+                    return "解析本地模型响应时发生错误"
+
+        # 拼接所有响应内容
+        return "".join(result_content) if result_content else "本地模型返回了空内容"
+
+    except requests.exceptions.RequestException as e:
+        return f"本地模型请求失败: {e}"
+    except ValueError:
+        return "本地模型返回了无效的JSON格式数据"
+
+
 
 def submit_post(url: str, data: dict):
     return requests.post(url, data=json.dumps(data))
@@ -268,24 +322,32 @@ def process_novel_segments(novel_id, processed_segments):
 
 
 def chat_with_model(prompt):
-    messages = [{"role": "user", "content": prompt}]
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=messages,
-        temperature=0.3,
-    )
-    return response.choices[0].message.content
-
+    """根据选择调用不同模型"""
+    if use_local_model:
+        return chat_with_local_model(prompt)
+    else:
+        # 调用 OpenAI API
+        messages = [{"role": "user", "content": prompt}]
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
 
 def chat_with_model_keywords(prompt):
-    messages = [{"role": "user", "content": prompt}]
-    response = client.chat.completions.create(
-        # model="gpt-4",
-        model="gpt-3.5-turbo",
-        messages=messages,
-        temperature=0.5,
-    )
-    return response.choices[0].message.content
+    """根据选择调用不同模型"""
+    if use_local_model:
+        return chat_with_local_model(prompt)
+    else:
+        messages = [{"role": "user", "content": prompt}]
+        response = client.chat.completions.create(
+            # model="gpt-4",
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.5,
+        )
+        return response.choices[0].message.content
 
 
 def get_replies(prompts):
@@ -955,6 +1017,13 @@ try:
         webui_server_url = default_webui_server_url
 except requests.exceptions.RequestException:
     webui_server_url = default_webui_server_url
+# 增加切换按钮
+model_toggle_button = tk.Button(window, text="切换模型", command=toggle_model_usage)
+model_toggle_button.pack()
+
+# 增加状态标签
+model_status_label = tk.Label(window, text="当前模型: OpenAI API")
+model_status_label.pack()
 
 # OpenAI API密钥输入框
 api_key_label = tk.Label(window, text="OpenAI API密钥:")
@@ -1018,6 +1087,9 @@ process_button.pack()
 
 status_label = tk.Label(window, text="")
 status_label.pack()
+
+# 在窗口关闭时释放资源
+window.protocol("WM_DELETE_WINDOW", lambda: (close_local_model(), window.destroy()))
 
 # 运行主循环
 if __name__ == "__main__":
