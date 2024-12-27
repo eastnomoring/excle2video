@@ -8,6 +8,8 @@ import tkinter as tk
 import wave
 from tkinter import ttk
 from tkinter import filedialog
+
+import gradio_client
 import pandas as pd
 from openai import OpenAI
 import re
@@ -20,6 +22,17 @@ from datetime import datetime
 
 from Draft import Draft
 from material import Material
+
+from gradio_client import Client, file
+
+# 全局变量
+use_local_model = False  # 默认使用OpenAI API
+current_audio_model = "gpt_sovits"
+model_status_label = None
+api_key_entry = None
+api_key_button = None
+webui_server_url = ""
+default_webui_server_url = 'http://127.0.0.1:7860'
 
 # 设置 Ollama HTTP API 的 URL
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -38,6 +51,7 @@ global_output_file = None
 openai_api_key = None
 
 client = None
+gradioclient = None
 # 建立数据库连接
 faconne = sqlite3.connect('novel.db')
 global_cursor = faconne.cursor()
@@ -222,13 +236,6 @@ positive_words_prompts = [
 
 negative_prompts = "EasyNegative,(nsfw:1.5),verybadimagenegative_v1.3, ng_deepnegative_v1_75t, (ugly face:0.8),cross-eyed,sketches, (worst quality:2), (low quality:2), (normal quality:2), lowres, normal quality, ((monochrome)), ((grayscale)), skin spots, acnes, skin blemishes, bad anatomy, DeepNegative, facing away, tilted head, Multiple people, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worstquality, low quality, normal quality, jpegartifacts, signature, watermark, username, blurry, bad feet, cropped, poorly drawn hands, poorly drawn face, mutation, deformed, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, extra fingers, fewer digits, extra limbs, extra arms,extra legs, malformed limbs, fused fingers, too many fingers, long neck, cross-eyed,mutated hands, polar lowres, bad body, bad proportions, gross proportions, text, error, missing fingers, missing arms, missing legs, extra digit, extra arms, extra leg, extra foot, ((repeating hair))"
 
-def toggle_model_usage():
-    """切换模型使用模式"""
-    global use_local_model
-    use_local_model = not use_local_model
-    model_status_label.config(
-        text=f"当前模型: {'本地模型 (Ollama)' if use_local_model else 'OpenAI API'}"
-    )
 
 def close_local_model():
     """关闭本地模型进程"""
@@ -268,7 +275,6 @@ def chat_with_local_model(prompt, model_name="qwen2.5:7b"):
         return f"本地模型请求失败: {e}"
     except ValueError:
         return "本地模型返回了无效的JSON格式数据"
-
 
 
 def submit_post(url: str, data: dict):
@@ -334,6 +340,7 @@ def chat_with_model(prompt):
             temperature=0.3,
         )
         return response.choices[0].message.content
+
 
 def chat_with_model_keywords(prompt):
     """根据选择调用不同模型"""
@@ -451,24 +458,6 @@ def extract_descriptions(paragraph):
     return None, None
 
 
-def select_file():
-    file_path = filedialog.askopenfilename(title="选择要处理的文件", filetypes=[("Excel Files", "*.xlsx;*.xls")])
-    # 从文件路径中提取文件名作为小说名称
-    file_name = os.path.basename(file_path)
-    novel_name = os.path.splitext(file_name)[0]
-
-    file_entry.delete(0, tk.END)
-    file_entry.insert(0, file_path)
-    load_columns(file_path)
-    # 将小说名称插入主表
-    global global_novel_id
-    global global_novel_name
-    global global_output_file
-    global_novel_name = novel_name
-    global_novel_id = insert_novel_name(novel_name)
-    global_output_file = os.path.dirname(file_path)
-
-
 def load_columns(file_path):
     try:
         df = pd.read_excel(file_path)
@@ -479,12 +468,6 @@ def load_columns(file_path):
         status_label.config(text=str(e))
 
 
-def select_columns():
-    selected_columns = [column_listbox.get(index) for index in column_listbox.curselection()]
-    columns_entry.delete(0, tk.END)
-    columns_entry.insert(0, ", ".join(selected_columns))
-
-
 def add_positive_word(output_text):
     # chat_with_model(positive_words_prompts[0])
     total_text = len(output_text)
@@ -492,12 +475,12 @@ def add_positive_word(output_text):
     if chat_with_model(positive_words_prompts[0]):
         for text in output_text:
             scene_words = chat_with_model_keywords(scene_words_prompts[5] +
-                                                     "以下是你需要处理的文本:" +
-                                                     text['visual_description'])
+                                                   "以下是你需要处理的文本:" +
+                                                   text['visual_description'])
             if scene_words is not None:
                 positive_word = chat_with_model_keywords(positive_words_prompts[1] +
-                                                     "使用英文回复，只需要提取关键词词组(Prompt)用于Stable diffusion绘画，以下是你需要处理的文本,请把关英文键词词组(Prompt)用逗号分割展示出来:" +
-                                                     scene_words)
+                                                         "使用英文回复，只需要提取关键词词组(Prompt)用于Stable diffusion绘画，以下是你需要处理的文本,请把关英文键词词组(Prompt)用逗号分割展示出来:" +
+                                                         scene_words)
                 text['positive_word'] = "4k,8k,best quality, masterpiece," + positive_word
 
             # 更新进度条
@@ -554,7 +537,11 @@ def process_file():
                 file.write(text['original_description'] + '\n')
 
         global_output_file = output_folder
-        generate_audio()
+        # 根据当前的音频模型选择合适的音频生成函数
+        if current_audio_model == "gpt_sovits":
+            generate_audio_with_gpt_sovits()
+        else:
+            generate_audio()
         # generate_image()
         status_label.config(text="处理完成！")
         # 在5秒后调用close_window函数，销毁窗口
@@ -564,6 +551,102 @@ def process_file():
 
     except Exception as e:
         status_label.config(text=str(e))
+
+
+def generate_audio_from_text(text):
+    try:
+        # 获取参考音频文件路径
+        ref_audio_path = audio_file_entry.get()
+
+        # 获取TXT文件内容
+        txt_file_path = audiotxt_file_entry.get()
+        with open(txt_file_path, 'r', encoding='utf-8') as file:
+            prompt_text = file.read()  # 读取TXT文件内容
+
+        # 调用 API 生成音频
+        result = gradioclient.predict(
+            ref_wav_path=gradio_client.handle_file(ref_audio_path),  # 参考音频文件路径
+            prompt_text=prompt_text,  # 可以选择添加提示文本，如果不需要可以为空
+            prompt_language="英文",  # 参考音频的语言
+            text=text,  # 需要合成的文本
+            text_language="英文",  # 需要合成的语言
+            how_to_cut="按英文句号.切",  # 切割文本方式
+            top_k=15,  # GPT采样参数
+            top_p=1,
+            temperature=1,
+            ref_free=False,  # 是否开启无参考文本模式
+            speed=1.1,  # 语速
+            inp_refs=[],
+            api_name="/get_tts_wav"
+        )
+        temp_audio_path = result
+        # 检查文件是否存在
+        if os.path.exists(temp_audio_path):
+            return temp_audio_path
+        else:
+            print(f"临时音频文件不存在: {temp_audio_path}")
+            return None
+    except Exception as e:
+        print(f"生成音频时出现错误：{e}")
+        return None
+
+
+def generate_audio_with_gpt_sovits():
+    try:
+        # 连接到 SQLite 数据库
+        db = sqlite3.connect('novel.db')
+        cursor = db.cursor()
+
+        # 获取当前小说的记录数量
+        count_query = f"SELECT COUNT(*) FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+        cursor.execute(count_query)
+        record_count = cursor.fetchone()[0]
+        print(f"记录数量：{record_count}")
+
+        # 查询 novel_scene 表中 novel_id 等于 global_novel_id 的场景下的原文
+        query = f"SELECT scene_id, original_description FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+        cursor.execute(query)
+
+        output_directory = os.path.join(global_output_file, "mp3")
+        os.makedirs(output_directory, exist_ok=True)
+        global gradioclient
+        # 创建 Gradio 客户端
+        gradioclient = Client("http://localhost:9872/")
+        try:
+            current_step = 0
+            for (scene_id, original_description) in cursor:
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                output_file = os.path.join(output_directory, f"{scene_id}-{timestamp}.wav")
+
+                audio_path = generate_audio_from_text(original_description)
+
+                if audio_path:
+                    # 将音频保存为 MP3 文件
+                    audio_data = open(audio_path, 'rb').read()  # 读取生成的音频文件
+
+                    # 保存音频文件
+                    with open(output_file, 'wb') as audio_file:
+                        audio_file.write(audio_data)
+
+                    # 更新进度条
+                    current_step += 1
+                    progress = 20 + (current_step / record_count) * 100 * 0.2
+                    progress_bar['value'] = progress
+                    window.update_idletasks()
+                else:
+                    print(f"生成音频失败，场景 {scene_id}")
+        except Exception as ex:
+            # 发生异常，回滚事务
+            db.rollback()
+            raise ex
+    except Exception as ex:
+        # 处理其他异常
+        print(f"生成音频时出现异常：{ex}")
+    finally:
+        # 关闭游标和数据库连接
+        cursor.close()
+        db.close()
+        process_mp3_files(output_directory)
 
 
 def generate_audio():
@@ -629,7 +712,7 @@ def process_mp3_files(audio_directory):
     # 创建游标
     cursor = db.cursor()
     for filename in os.listdir(audio_directory):
-        if filename.endswith(".mp3"):
+        if filename.endswith(".mp3") or filename.endswith(".wav"):  # 支持mp3和wav
             # 解析出 scene_id
             scene_id = filename.split("-")[0]
 
@@ -997,96 +1080,279 @@ def close_window():
 
 # 创建主窗口
 window = tk.Tk()
-window.title("Excel列转换为草稿")
-window.geometry("600x500")
-# 本地SD的api
-webui_server_url = ""
-default_webui_server_url = 'http://127.0.0.1:7860'
-try:
-    with open('./webui_server_url.txt', 'r') as file:
-        webui_server_url = file.read().strip()
-except FileNotFoundError:
-    webui_server_url = default_webui_server_url
+window.title("转为剪映草稿")
+window.geometry("900x800")
+window.config(bg="#f0f0f0")  # 设置背景颜色
 
-if not webui_server_url:
-    webui_server_url = default_webui_server_url
-# 测试webui_server_url是否联通
-try:
-    response = requests.get(webui_server_url)
-    if response.status_code != 200:
+# 创建两个Frame：一个用于抖音页面，另一个用于TikTok页面
+# 创建Frame用于抖音页面
+frame_douyin = tk.Frame(window, bg="#f0f0f0")
+frame_douyin.grid(row=0, column=0, sticky="nsew")
+frame_douyin.grid_forget()  # 默认不显示抖音页面
+
+# 创建Frame用于TikTok页面
+frame_tiktok = tk.Frame(window, bg="#f0f0f0")
+frame_tiktok.grid(row=0, column=0, sticky="nsew")
+frame_tiktok.grid_forget()  # 默认不显示TikTok页面
+
+# 设置窗口布局，使得frame_douyin和frame_tiktok可以扩展
+window.grid_rowconfigure(0, weight=1)
+window.grid_columnconfigure(0, weight=1)
+
+# 创建按钮框架
+button_frame = tk.Frame(window, bg="#f0f0f0")
+button_frame.grid(row=1, column=0, pady=20)
+
+# 页面切换按钮，横向排列
+button_douyin = tk.Button(button_frame, text="切换到抖音", command=lambda: toggle_page("douyin"), font=("Arial", 14),
+                          relief="solid", width=15)
+button_douyin.grid(row=0, column=0, padx=20)
+
+button_tiktok = tk.Button(button_frame, text="切换到TikTok", command=lambda: toggle_page("tiktok"), font=("Arial", 14),
+                          relief="solid", width=15)
+button_tiktok.grid(row=0, column=1, padx=20)
+
+
+# 切换模型的函数
+def toggle_model_usage():
+    """切换模型使用模式"""
+    global use_local_model
+    use_local_model = not use_local_model
+
+    # 更新模型状态标签
+    model_status_label.config(
+        text=f"当前模型: {'本地模型 (Ollama)' if use_local_model else 'OpenAI API'}"
+    )
+
+    # 切换时根据模型状态隐藏或显示API密钥设置框
+    if use_local_model:
+        # 隐藏API密钥设置框
+        api_key_label.grid_forget()
+        api_key_entry.grid_forget()
+        api_key_button.grid_forget()
+    else:
+        # 显示API密钥设置框
+        api_key_label.grid(row=2, column=1, padx=5, pady=5)
+        api_key_entry.grid(row=2, column=2, padx=5, pady=5)
+        api_key_button.grid(row=2, column=3, padx=5, pady=5)
+
+
+# 切换音频模型
+def toggle_audio_model():
+    global current_audio_model
+    if current_audio_model == "pyttsx3":
+        current_audio_model = "gpt_sovits"
+        audio_model_status_label.config(text="当前音频模型: gpt_sovits")
+        audio_file_entry.grid(row=4, column=1, columnspan=2, pady=5)
+        audio_file_button.grid(row=4, column=3, padx=5, pady=5)
+        audiotxt_model_status_label.grid(row=5, column=0, padx=5, pady=5, sticky="w")
+        audiotxt_file_entry.grid(row=5, column=1, columnspan=2, pady=5)
+        audiotxt_file_button.grid(row=5, column=3, padx=5, pady=5, sticky="w")
+
+    else:
+        current_audio_model = "pyttsx3"
+        audio_model_status_label.config(text="当前音频模型: pyttsx3")
+        audio_file_entry.grid_forget()
+        audio_file_button.grid_forget()
+        audiotxt_model_status_label.grid_forget()
+        audiotxt_file_entry.grid_forget()
+        audiotxt_file_button.grid_forget()
+
+
+# 设置API密钥
+def set_api_key():
+    # 保存API密钥的逻辑
+    api_key = api_key_entry.get()
+    with open("openai_api_key.txt", "w") as file:
+        file.write(api_key)
+    status_label.config(text="API密钥已保存！")
+
+
+def select_file():
+    file_path = filedialog.askopenfilename(title="选择要处理的文件", filetypes=[("Excel Files", "*.xlsx;*.xls")])
+    # 从文件路径中提取文件名作为小说名称
+    file_name = os.path.basename(file_path)
+    novel_name = os.path.splitext(file_name)[0]
+
+    file_entry.delete(0, tk.END)
+    file_entry.insert(0, file_path)
+    load_columns(file_path)
+    # 将小说名称插入主表
+    global global_novel_id
+    global global_novel_name
+    global global_output_file
+    global_novel_name = novel_name
+    global_novel_id = insert_novel_name(novel_name)
+    global_output_file = os.path.dirname(file_path)
+
+
+def select_wav_file():
+    """选择WAV文件"""
+    file_path = filedialog.askopenfilename(filetypes=[("WAV Files", "*.wav")])
+    if file_path:
+        audio_file_entry.delete(0, tk.END)
+        audio_file_entry.insert(0, file_path)
+
+
+def select_txt_file():
+    """选择TXT文件"""
+    file_path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
+    if file_path:
+        audiotxt_file_entry.delete(0, tk.END)
+        audiotxt_file_entry.insert(0, file_path)
+
+
+# 本地SD的API配置
+def load_webui_server_url():
+    global webui_server_url
+    global default_webui_server_url
+    try:
+        with open('./webui_server_url.txt', 'r') as file:
+            webui_server_url = file.read().strip()
+    except FileNotFoundError:
         webui_server_url = default_webui_server_url
-except requests.exceptions.RequestException:
-    webui_server_url = default_webui_server_url
-# 增加切换按钮
-model_toggle_button = tk.Button(window, text="切换模型", command=toggle_model_usage)
-model_toggle_button.pack()
 
-# 增加状态标签
-model_status_label = tk.Label(window, text="当前模型: OpenAI API")
-model_status_label.pack()
+    if not webui_server_url:
+        webui_server_url = default_webui_server_url
+    # 测试webui_server_url是否联通
+    try:
+        response = requests.get(webui_server_url)
+        if response.status_code != 200:
+            webui_server_url = default_webui_server_url
+    except requests.exceptions.RequestException:
+        webui_server_url = default_webui_server_url
+    return webui_server_url
 
-# OpenAI API密钥输入框
-api_key_label = tk.Label(window, text="OpenAI API密钥:")
-api_key_label.pack()
-api_key_entry = tk.Entry(window, width=40)
-api_key_entry.pack()
-api_key_button = tk.Button(window, text="设置API密钥", command=set_api_key)
-api_key_button.pack()
 
-# 从文件中读取API密钥值
-try:
-    with open("openai_api_key.txt", "r") as file:
-        saved_api_key = file.read().strip()
+# 抖音页面内容
+def show_douyin():
+    load_webui_server_url()
+    frame_douyin.grid_forget()  # 默认不显示抖音页面
+    frame_tiktok.grid_forget()  # 默认不显示TikTok页面
+    frame_douyin.grid(row=0, column=0, sticky="nsew")  # 显示抖音页面
 
-        if saved_api_key:
-            api_key_entry.insert(0, saved_api_key)
-            openai_api_key = saved_api_key
-            client = OpenAI(
-                api_key=openai_api_key,
-                base_url='https://api.gpt-ai.live/v1'
-            )
-except FileNotFoundError:
-    pass
+    # 显示欢迎标签
+    label_douyin = tk.Label(frame_douyin, text="抖音业务页面！", font=("Arial", 20, "bold"), bg="#f0f0f0")
+    label_douyin.grid(row=0, column=0, columnspan=4, pady=20)  # 让欢迎标签横跨4列
 
-# 选择文件按钮和输入框
-file_label = tk.Label(window, text="选择要处理的文件:")
-file_label.pack()
-file_entry = tk.Entry(window, width=40)
-file_entry.pack()
-file_button = tk.Button(window, text="选择文件", command=select_file)
-file_button.pack()
+    # 增加切换模型按钮
+    model_toggle_button = tk.Button(frame_douyin, text="切换文字模型", command=toggle_model_usage, font=("Arial", 12),
+                                    relief="solid", width=20)
+    model_toggle_button.grid(row=1, column=0, columnspan=4, pady=10)  # 让切换按钮横跨4列
 
-# 列选择部分
-columns_label = tk.Label(window, text="选择要提取的列（多选）:")
-columns_label.pack()
-column_listbox = tk.Listbox(window, selectmode=tk.MULTIPLE)
-column_listbox.pack()
+    # 增加状态标签
+    global model_status_label
+    model_status_label = tk.Label(frame_douyin, text="当前文字模型: OpenAI API", font=("Arial", 12), bg="#f0f0f0")
+    model_status_label.grid(row=2, column=0, padx=5, pady=5, sticky="w")
 
-scrollbar = tk.Scrollbar(window)
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-column_listbox.config(yscrollcommand=scrollbar.set)
-scrollbar.config(command=column_listbox.yview)
+    # OpenAI API密钥输入框部分，设置它们在同一行显示
+    global api_key_label
+    api_key_label = tk.Label(frame_douyin, text="OpenAI API密钥:", font=("Arial", 12), bg="#f0f0f0")
+    api_key_label.grid(row=2, column=1, padx=5, pady=5, sticky="w")
 
-column_listbox.bind('<<ListboxSelect>>', toggle_selection)
+    global api_key_entry
+    api_key_entry = tk.Entry(frame_douyin, width=40, font=("Arial", 12))
+    api_key_entry.grid(row=2, column=2, padx=5, pady=5)
 
-# 处理按钮和状态提示
-select_button = tk.Button(window, text="选择列", command=select_columns)
-select_button.pack()
+    global api_key_button
+    api_key_button = tk.Button(frame_douyin, text="设置API密钥", command=set_api_key, font=("Arial", 12),
+                               relief="solid", width=20)
+    api_key_button.grid(row=2, column=3, padx=5, pady=5)
 
-columns_entry = tk.Entry(window, width=40)
-columns_entry.pack()
+    # 增加切换音频模型按钮
+    audio_model_toggle_button = tk.Button(frame_douyin, text="切换音频模型", command=toggle_audio_model,
+                                          font=("Arial", 12),
+                                          relief="solid", width=20)
+    audio_model_toggle_button.grid(row=3, column=0, columnspan=4, pady=10)
 
-progress_bar = ttk.Progressbar(window, length=300, mode='determinate')
-progress_bar.pack()
+    # 增加状态标签
+    global audio_model_status_label
+    audio_model_status_label = tk.Label(frame_douyin, text="当前音频模型: gpt_sovits", font=("Arial", 12), bg="#f0f0f0")
+    audio_model_status_label.grid(row=4, column=0, padx=5, pady=5, sticky="w")
 
-process_button = tk.Button(window, text="处理文件", command=process_file)
-process_button.pack()
+    # 音频文件选择部分
+    global audio_file_entry
+    audio_file_entry = tk.Entry(frame_douyin, width=40, font=("Arial", 12))
+    audio_file_entry.grid(row=4, column=1, columnspan=2, pady=5)
+    global audio_file_button
+    audio_file_button = tk.Button(frame_douyin, text="选择WAV文件", command=select_wav_file, font=("Arial", 12),
+                                  relief="solid",
+                                  width=20)
+    audio_file_button.grid(row=4, column=3, padx=5, pady=5, sticky="w")
+    # 增加状态标签
+    global audiotxt_model_status_label
+    audiotxt_model_status_label = tk.Label(frame_douyin, text="音频模型参考TXT:", font=("Arial", 12), bg="#f0f0f0")
+    audiotxt_model_status_label.grid(row=5, column=0, padx=5, pady=5, sticky="w")
 
-# import_button = tk.Button(window, text="导入剪映", command=import_to_jianying)
-# import_button.pack()
+    # 音频文件选择部分
+    global audiotxt_file_entry
+    audiotxt_file_entry = tk.Entry(frame_douyin, width=40, font=("Arial", 12))
+    audiotxt_file_entry.grid(row=5, column=1, columnspan=2, pady=5)
+    global audiotxt_file_button
+    audiotxt_file_button = tk.Button(frame_douyin, text="选择参考TXT文件", command=select_txt_file, font=("Arial", 12),
+                                     relief="solid",
+                                     width=20)
+    audiotxt_file_button.grid(row=5, column=3, padx=5, pady=5, sticky="w")
 
-status_label = tk.Label(window, text="")
-status_label.pack()
+    # 文件选择部分
+    file_label = tk.Label(frame_douyin, text="选择要处理的文件:", font=("Arial", 12), bg="#f0f0f0")
+    file_label.grid(row=6, column=0, padx=5, pady=5, sticky="w")
+
+    global file_entry
+    file_entry = tk.Entry(frame_douyin, width=40, font=("Arial", 12))
+    file_entry.grid(row=6, column=1, columnspan=2, pady=5)
+
+    file_button = tk.Button(frame_douyin, text="选择文件", command=select_file, font=("Arial", 12), relief="solid",
+                            width=20)
+    file_button.grid(row=6, column=3, padx=5, pady=5)
+
+    # 列选择部分
+    columns_label = tk.Label(frame_douyin, text="选择要提取的列（多选）:", font=("Arial", 12), bg="#f0f0f0")
+    columns_label.grid(row=7, column=0, padx=5, pady=5, sticky="w")
+
+    global column_listbox
+    column_listbox = tk.Listbox(frame_douyin, selectmode=tk.MULTIPLE, font=("Arial", 12))
+    column_listbox.grid(row=7, column=1, columnspan=2, pady=10)  # 使用columnspan横跨3列
+
+    column_listbox.bind('<<ListboxSelect>>', toggle_selection)
+
+    # 进度条
+    progress_label = tk.Label(frame_douyin, text="处理进度:", font=("Arial", 12), bg="#f0f0f0")
+    progress_label.grid(row=8, column=0, padx=5, pady=5, sticky="w")
+
+    global progress_bar
+    progress_bar = ttk.Progressbar(frame_douyin, length=300, mode='determinate')
+    progress_bar.grid(row=8, column=1, columnspan=2, pady=10)  # 使用columnspan横跨3列
+
+    # 处理按钮
+    process_button = tk.Button(frame_douyin, text="处理文件", command=process_file, font=("Arial", 12), relief="solid",
+                               width=20)
+    process_button.grid(row=9, column=0, columnspan=4, pady=20)  # 横跨4列
+
+    # 状态标签
+    global status_label
+    status_label = tk.Label(frame_douyin, text="状态信息", font=("Arial", 12), bg="#f0f0f0")
+    status_label.grid(row=10, column=0, columnspan=4, pady=5)  # 横跨4列
+
+
+# TikTok页面内容
+def show_tiktok():
+    frame_douyin.grid_forget()  # 默认不显示抖音页面
+    frame_tiktok.grid_forget()  # 默认不显示TikTok页面
+    frame_tiktok.grid(row=0, column=0, sticky="nsew")  # 显示抖音页面
+
+    # 显示欢迎标签
+    label_tiktok = tk.Label(frame_tiktok, text="TikTok业务页面！", font=("Arial", 20, "bold"), bg="#f0f0f0")
+    label_tiktok.grid(row=0, column=0, columnspan=4, pady=20)  # 让欢迎标签横跨4列
+
+
+# 切换页面的函数
+def toggle_page(page):
+    if page == "douyin":
+        show_douyin()
+    elif page == "tiktok":
+        show_tiktok()
+
 
 # 在窗口关闭时释放资源
 window.protocol("WM_DELETE_WINDOW", lambda: (close_local_model(), window.destroy()))
