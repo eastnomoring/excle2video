@@ -1,7 +1,11 @@
 将excle格式的小说转为剪映草稿
 
 一、安装剪映
+  将JianyingPro Drafts文件夹路径写到同目录的drafts_folder.txt里，例如：E:\JianyingPro Drafts
 二、本地部署秋叶整合包
+  https://space.bilibili.com/12566101  B站自行学习SD整合包的部署。
+  使用时A绘世启动器点击一键启动
+  不要关闭控制台！
 三、本地部署AI大模型（Ollama+通义千问）
 1、下载Ollama
   打开官网：https://ollama.com/
@@ -23,4 +27,5 @@
   不要关闭控制台！
   依次点击“1-GPT-SOVITS-TTS”、“1C推理” 页签
   勾选“启用并行推理版本(推理速度更快)” 点击“开启TTS推理webul”按钮
+  不要关闭控制台！
 
