@@ -37,8 +37,8 @@
     双击qwen2.5_7b.bat（不要关闭控制台！）
     双击 GPT-SoVITS-v2-240821文件夹下的 go-webui.bat ，依次点击“1-GPT-SOVITS-TTS”、“1C推理” 页签，
     勾选“启用并行推理版本(推理速度更快)” 点击“开启TTS推理webul”按钮（不要关闭控制台！）
-    下载参考音频http://doglast.yaozhiyuan.cn/%E5%8F%82%E8%80%83%E9%9F%B3%E9%A2%91/01%E5%A5%B3%E9%9F%B3%E5%8F%82%E8%80%83/01%E5%A5%B3%E9%9F%B3%E5%8F%82%E8%80%83.WAV
-    下载参考音频文字http://doglast.yaozhiyuan.cn/%E5%8F%82%E8%80%83%E9%9F%B3%E9%A2%91/01%E5%A5%B3%E9%9F%B3%E5%8F%82%E8%80%83/01%E5%A5%B3%E9%9F%B3%E5%8F%82%E8%80%83.txt
+    下载参考音频 (http://doglast.yaozhiyuan.cn/%E5%8F%82%E8%80%83%E9%9F%B3%E9%A2%91/01%E5%A5%B3%E9%9F%B3%E5%8F%82%E8%80%83/01%E5%A5%B3%E9%9F%B3%E5%8F%82%E8%80%83.WAV)
+    下载参考音频文字 (http://doglast.yaozhiyuan.cn/%E5%8F%82%E8%80%83%E9%9F%B3%E9%A2%91/01%E5%A5%B3%E9%9F%B3%E5%8F%82%E8%80%83/01%E5%A5%B3%E9%9F%B3%E5%8F%82%E8%80%83.txt)
     （如果使用pyttsx3生成音频可不下载！）
 ### 4、运行本工具
     按需切换业务界面
