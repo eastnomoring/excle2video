@@ -52,6 +52,10 @@ openai_api_key = None
 
 client = None
 gradioclient = None
+
+ref_audio_path = ""
+prompt_text = ""
+
 # 建立数据库连接
 faconne = sqlite3.connect('novel.db')
 global_cursor = faconne.cursor()
@@ -555,33 +559,36 @@ def process_file():
 
 def generate_audio_from_text(text):
     try:
-        # 获取参考音频文件路径
-        ref_audio_path = audio_file_entry.get()
-
-        # 获取TXT文件内容
-        txt_file_path = audiotxt_file_entry.get()
-        with open(txt_file_path, 'r', encoding='utf-8') as file:
-            prompt_text = file.read()  # 读取TXT文件内容
-
         # 调用 API 生成音频
         result = gradioclient.predict(
-            ref_wav_path=gradio_client.handle_file(ref_audio_path),  # 参考音频文件路径
-            prompt_text=prompt_text,  # 可以选择添加提示文本，如果不需要可以为空
-            prompt_language="英文",  # 参考音频的语言
             text=text,  # 需要合成的文本
-            text_language="英文",  # 需要合成的语言
-            how_to_cut="按英文句号.切",  # 切割文本方式
+            text_lang="英文",  # 需要合成的语言
+            ref_audio_path=gradio_client.handle_file(ref_audio_path),  # 参考音频文件路径
+            aux_ref_audio_paths=[],
+            prompt_text=prompt_text,  # 可以选择添加提示文本，如果不需要可以为空
+            prompt_lang="英文",  # 参考音频的语言
             top_k=15,  # GPT采样参数
             top_p=1,
             temperature=1,
-            ref_free=False,  # 是否开启无参考文本模式
-            speed=1.1,  # 语速
-            inp_refs=[],
-            api_name="/get_tts_wav"
+            text_split_method="按英文句号.切",  # 切割文本方式
+            batch_size=20,
+            speed_factor=1,
+            ref_text_free=False,  # 是否开启无参考文本模式
+            split_bucket=True,
+            fragment_interval=0.3,
+            seed=-1,
+            keep_random=True,
+            parallel_infer=True,
+            repetition_penalty=1.35,
+            api_name="/inference"
         )
         temp_audio_path = result
-        # 检查文件是否存在
-        if os.path.exists(temp_audio_path):
+        # 如果 temp_audio_path 是元组，取出路径
+        if isinstance(temp_audio_path, tuple):
+            temp_audio_path = temp_audio_path[0]  # 假设文件路径在元组的第一个位置
+
+        # 检查路径是否是字符串类型
+        if isinstance(temp_audio_path, str) and os.path.exists(temp_audio_path):
             return temp_audio_path
         else:
             print(f"临时音频文件不存在: {temp_audio_path}")
@@ -593,6 +600,7 @@ def generate_audio_from_text(text):
 
 def generate_audio_with_gpt_sovits():
     try:
+        global ref_audio_path, prompt_text
         # 连接到 SQLite 数据库
         db = sqlite3.connect('novel.db')
         cursor = db.cursor()
@@ -612,6 +620,40 @@ def generate_audio_with_gpt_sovits():
         global gradioclient
         # 创建 Gradio 客户端
         gradioclient = Client("http://localhost:9872/")
+
+        change_choices_result = gradioclient.predict(
+            api_name="/change_choices"
+        )
+        # 提取 'choices' 中的路径
+        choices_1 = [choice[0] for choice in change_choices_result[0]['choices']]
+        choices_2 = [choice[0] for choice in change_choices_result[1]['choices']]
+
+        hange_sovits_weights_result = gradioclient.predict(
+            sovits_path=choices_1[1],
+            prompt_language="英文",
+            text_language="英文",
+            api_name="/change_sovits_weights"
+        )
+        init_t2s_weights_result = gradioclient.predict(
+            weights_path=choices_2[1],
+            api_name="/init_t2s_weights"
+        )
+        # 获取参考音频文件路径
+        ref_audio_path = audio_file_entry.get()
+        # 如果是元组类型，强制转换为字符串
+        if isinstance(ref_audio_path, tuple):
+            ref_audio_path = str(ref_audio_path[0])  # 假设文件路径在元组的第一个位置
+
+        # 确保 ref_audio_path 是字符串类型
+        if not isinstance(ref_audio_path, str):
+            print("ref_audio_path 应该是一个有效的字符串路径，但当前值是：{}".format(type(ref_audio_path)))
+        # 使用 replace 方法将双引号转为单引号
+        ref_audio_path = ref_audio_path.replace('"', "'")
+        # 获取TXT文件内容
+        txt_file_path = audiotxt_file_entry.get()
+        with open(txt_file_path, 'r', encoding='utf-8') as txt_file:
+            prompt_text = txt_file.read()  # 读取TXT文件内容
+        prompt_text = prompt_text.replace('"', "'")
         try:
             current_step = 0
             for (scene_id, original_description) in cursor:
