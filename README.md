@@ -1,12 +1,12 @@
-将excle格式的小说转为剪映草稿
-
-一、安装剪映
+# 将excle格式的小说转为剪映草稿
+## 一、安装剪映
   将JianyingPro Drafts文件夹路径写到同目录的drafts_folder.txt里，例如：E:\JianyingPro Drafts
-二、本地部署秋叶整合包
+
+## 二、本地部署秋叶整合包
   https://space.bilibili.com/12566101  B站自行学习SD整合包的部署。
   使用时A绘世启动器点击一键启动
-  不要关闭控制台！
-三、本地部署AI大模型（Ollama+通义千问）
+
+## 三、本地部署AI大模型（Ollama+通义千问）
 1、下载Ollama
   打开官网：https://ollama.com/
 2、安装Ollama
@@ -19,14 +19,13 @@
   ollama run qwen2.5:7b
   以后需要运行通义千问，双击运行刚才保存的bat文件即可。当然也可以每次在命令行直接运行命令来启用。
   ollama list  查看本地AI大模型列表
-  不要关闭控制台！
 
-四、本地部署GPT-SoVITS-WebUI
+## 四、本地部署GPT-SoVITS-WebUI
+
   参考https://github.com/RVC-Boss/GPT-SoVITS/blob/main/docs/cn/README.md
   下载下载整合包，解压后双击 go-webui.bat 即可启动 GPT-SoVITS-WebUI。
-  不要关闭控制台！
-  不要关闭控制台！
-五、使用本工具
+
+## 五、使用本工具
   1、配置
     1.1 将JianyingPro Drafts文件夹路径写到同目录的drafts_folder.txt里
     1.2 如果使用chatgpt进行文字处理，将密钥填写进同目录的openai_api_key.txt；如果使用本地通义千问大模型可不填写
@@ -52,4 +51,8 @@
     选择包含小说内容的那一列
     最后点击按钮“处理文件”
   5、耐心等待处理完文件，打开剪映里对草稿进行编辑
+
+
+
+
     
