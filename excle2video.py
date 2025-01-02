@@ -20,41 +20,14 @@ import requests
 import pyttsx3
 from datetime import datetime
 
+from AppState import AppState
 from Draft import Draft
 from material import Material
 
 from gradio_client import Client, file
 
 # 全局变量
-use_local_model = False  # 默认使用OpenAI API
-current_audio_model = "gpt_sovits"
-model_status_label = None
-api_key_entry = None
-api_key_button = None
-webui_server_url = ""
-default_webui_server_url = 'http://127.0.0.1:7860'
-
-# 设置 Ollama HTTP API 的 URL
-OLLAMA_URL = "http://localhost:11434/api/generate"
-# 全局变量，用于记录当前是否使用本地模型
-use_local_model = False
-local_model_process = None
-
-# 全局变量用于存储novel_id
-global_novel_id = None
-
-global_novel_name = None
-
-global_output_file = None
-# 设置OpenAI API密钥  sk-aarqWvwUk7RglB5m22F07aD75b1f4d3c892590999fC9E263
-
-openai_api_key = None
-
-client = None
-gradioclient = None
-
-ref_audio_path = ""
-prompt_text = ""
+app_state = AppState()
 
 # 建立数据库连接
 faconne = sqlite3.connect('novel.db')
@@ -94,159 +67,12 @@ faconne.commit()
 # 关闭数据库连接
 faconne.close()
 
-max_token = 384  # 假设最大token数为4096
-
-fixed_prompts = [
-    "我希望你能扮演一个优秀的作家，你有很强的阅读能力，学习能力。我会给你一篇稿件，你会根据我提供的稿件保持原文不变，仅仅根据上下文对稿件进行分段，按顺序将稿件依据场景进行划分。如果你理解了这一点要求，请等待我发送下一点要求",
-    "我想让你扮演插画师的角色，你可以以绘画、绘图或数字媒体等形式，用于补充或增强文字内容，通过图像来传达信息、故事情节、情感或概念。如果你理解了这一点要求，请等待我发送下一点要求",
-    "我想让你对小说内容进行分镜，根据分镜后的原文描述推断出的场景；推断和补充缺失或隐含的信息，包括但不限于：人物衣服，人物发型，人物发色，人物脸色，人物五官特点，人物体态，人物情绪，人物肢体动作等）、风格描述（包括但不限于：年代描述、空间描述、时间段描述、地理环境描述、天气描述）、物品描述（包括但不限于：动物、植物、食物、水果、玩具）、画面视角（包括但不限于：人物比例、镜头深度描述、观察角度描述）。但不要过度。通过镜头语言描述，描绘更丰富的人物情绪和情感状态，你理解后通过句子生成一段新的描述内容。如果你明白了，请等待我给你发送下一点要求",
-    "请注意输出格式改为成组的原文描述对应画面描述，将原文跟据场景或语境（若干句）分组：第n组：原文描述：原文…… 画面描述：根据原文句子创做的剧情内容…… 等等 ，要根据原文分组，不要缩减原文内容。如果你理解了这一要求，请确认并记住输出格式，然后等待我给你发送小说文本，按照输出格式输出"
-]
-# 场景词
-scene_words_prompts = [
-    # 未来机甲风格
-    "你是一名专业的AI绘画提示词专家，我会给你一句话，你需要根据这句话帮我生成适合AI绘画的提示词，规则如下：" +
-    "1.本文段为未来世界，科幻风格，科技发达，机甲，机械，未来枪械，先进科技，人工智能，全息投影等为主要提示词" +
-    "2.以第一人称视角转化文本为画面描写;规则如下:不能更改句意，不能忽略，不能编造，要符合逻辑，保留人物姓名，删除人物对话.人物主体根据语义判断使用：一个男人、一个女人、一个男孩、一个女孩、一个小男孩、一个小女孩、一个中年女人、一个中年男人等的词去描述;主体放在最前面前面，动作描写接在后面，背景或者场景描述放在中间，整体修饰放最后面." +
-    "3.给你的小说片段的内容再意思不变的情况下丰富性细节,并把他做成有画面感的描述表达" +
-    "4.如果描述的只是场景则不需要人物主体描述" +
-    "5.根据文段的文字，请提供相对的场景提示词例如：街道，商业街，大厦，市中心" +
-    "6.文段中包含人物，则需要描述人物的大概穿着例如：休闲服，板鞋，风衣外套符合现代的服饰穿搭" +
-    "7.根据文本的主体人物体或环境描述，用电影镜头思维判断该画面适合使用那种景别（例如：特写，近景，中景，全景，远景）并添加到提示词" +
-    "8.根据文段环境添加氛围描述词例如 暖调，晴朗，光线充足的" +
-    "9.生成的提示词要跟句意相符合，不能胡编乱砸" +
-    "10.你生成的描述词不能超过30个字，请严格遵守" +
-    "以下是几个案例请参考：" +
-    "输入案例:这副机甲已被冰封长达千年之久" +
-    "输出案例:室外，机甲，巨大机器，机械零件，极地冰川，冰雪掩埋，寒冷，光晕，自然光，光影，投影，全景，景深，电影质感，冷调，锐利光线，未来，科幻" +
-    "输入案例:然而诡异的是，机甲是近二百年才被人类研发出来，那这副机甲又是从哪里来的" +
-    "输出案例:未来，科幻，工厂，流水线，机械制造，机械；零件，近景，景深，暖调，电影质感，景深，投影，光斑，自然光线，光晕" +
-    "输入案例:采用目前世界上最先进的激光武器溶解冰层，其威力相当于100颗原子弹同时爆炸，结果可想而知" +
-    "输出案例:巨大爆炸，激光武器，未来，科幻，科幻风格，景深，电影质感，强对比，投影，高光" +
-    "输入案例:带着疑惑，人类联邦政府一致决定" +
-    "输出案例:室内，会议室，人群开会，决策，未来，高科技，景深，环境光，暖光，电影分镜，电影质感",
-    # 都市
-    "你是一名专业的AI绘画提示词专家，我会给你一句话，你需要根据这句话帮我生成适合AI绘画的提示词，规则如下：" +
-    "1.给你的小说片段的内容再意思不变的情况下丰富性细节,并把他做成有画面感的描述表达" +
-    "2.如果是以第一人称视角则转化文本为画面描写;规则如下:不能更改句意，不能忽略，不能编造，要符合逻辑，保留人物姓名，删除人物对话.人物主体根据语义判断使用：一个男人、一个女人、一个男孩、一个女孩、一个小男孩、一个小女孩、一个中年女人、一个中年男人等的词去描述，;主体放在最前面前面，动作描写接在后面，背景或者场景描述放在中间，整体修饰放最后面." +
-    "3.本文段为现代，都市，城市，日常生活，现实，21世纪20年代等为主要提示词" +
-    " 4.文段中包含人物，则根据文段描述人物的穿着，例如：奢华的，华丽，晚礼服，休闲服，高跟鞋，风衣外套符合现代的服饰穿搭" +
-    "5.如果描述的只是场景则不需要人物主体描述" +
-    "6.根据文段的文字，请提供相对的场景提示词例如街道，走廊，公园，花丛，庭院，公寓，房间等" +
-    "7.根据文本的主体人物体或环境描述，用电影镜头思维判断该画面适合使用那种景别（例如：特写，近景，全景，中景，远景）并添加到提示词" +
-    "8.根据文段环境添加氛围描述词例如 暖调，晴朗，光线充足的" +
-    "9.生成的提示词要跟句意相符合，不能胡编乱砸" +
-    "10.你生成的描述词不能超过60个字，请严格遵守" +
-    "以下是几个案例请参考：" +
-    "输入案例:上午的阳光明晃晃的斜过大大的窗口落在课桌上，外面是高高的白杨树" +
-    "输出案例:教室讲台，早晨，树木投影，中景，暖调，现代校园，景深，阴影光斑，光晕" +
-    "输入案例:徐羊环顾四周，如果记忆不曾出错的话，那现在正是她升入大学后的第一次班会" +
-    "输出案例:一个女大学生，穿着休闲上衣和牛仔裤，在教室内环顾四周，，近景，景深，暖调，现代校园，自然光线，光晕" +
-    "输入案例:女方不仅要拿出高达数百万的彩礼" +
-    "输出案例:一个女人身上穿着都是名贵服饰，周围都是现金，全景，暖调，光线充足" +
-    "输入案例:不管发生了什么你都不会招惹那个最危险的村长" +
-    "输出案例:一个中年人村口站着表情严肃，中景，暖调，现代乡下，自然光线",
-    # 古风
-    "你是一名专业的AI绘画提示词专家，我会给你一句话，你需要根据这句话帮我生成适合AI绘画的提示词，规则如下：" +
-    "1.本文段时代背景为古代中国。皇权，繁华" +
-    "2.同时注意上下文段之间的剧情联系，不可以分开解读。" +
-    "3.如果是以第一人称视角则转化文本为画面描写;规则如下:不能更改句意，不能忽略，不能编造，要符合逻辑，保留人物姓名，删除人物对话." +
-    "4.人物主体根据语义判断使用：一个男人、一个女人、一个男孩、一个女孩、一个小男孩、一个小女孩、一个中年女人、一个中年男人等的词去描述，;主体放在最前面前面，动作描写接在后面，背景或者场景描述放在中间，整体修饰放最后面." +
-    "5.文段中包含人物，则需要根据文段描述人物的大概穿着例如：汉服，首饰，珠宝，流苏，耳环，发带，头簪，玉佩等" +
-    "6.如果描述的只是场景则不需要人物主体描述" +
-    "7.根据文段的文字描述判断环境，并提供相对的场景提示词例如：中国古建筑，苏州园林，河边，长安街市，郊外，皇宫内殿，书房，寝室，梳妆台，床边等" +
-    "8.根据文本的主体人物体或环境描述，用电影镜头思维判断该画面适合使用那种景别（例如特写，近景，全景，中景，远景）并添加到提示词" +
-    "9.根据文段环境添加氛围描述词例如：暖调，晴朗，光线充足的" +
-    "10.生成的提示词要跟句意相符合，不能胡编乱砸" +
-    "11.你生成的描述词不能超过60个字，请严格遵守" +
-    "以下是几个案例请参考,请以实际输入文段为标准，不要直接照抄以下案例输出：" +
-    "输入案例:婚后的日子与婚前并无太大不同他仍然带着我胡闹 输出案例:一男一女两个人在外玩耍嬉戏，古风，皇权，，汉服，，流苏，苏州园林，树枝，草丛，表情自然，远景，暖调。" +
-    "输入案例:我羞得满面通红把袖子蒙住他的脸 输出案例:一个女生用袖子盖住了男生的脸，，汉服，发带，头簪，玉佩，中景，暖调." +
-    "输入案例:捕捉到他的表情，我不可置信地飘到他面前 输出案例：一个女人悬浮在空中，幽灵，汉服，首饰，流苏，耳环，近景。古代郊区，昏暗，阴森，寒冷" +
-    "输入案例:出发去金陵的那一日我和赵煜送他到城门口 输出案例:一个女人穿着汉服，流苏，发带，在城门口送别亲人，古代城门口，街市，中景，暖调",
-    # 未来末世
-    "你是一名专业的AI绘画提示词专家，我会给你一句话，你需要根据这句话帮我生成适合AI绘画的提示词，规则如下：" +
-    "1.给你的小说片段的内容再意思不变的情况下丰富性细节,并把他做成有画面感的描述表达" +
-    "2.如果是以第一人称视角则转化文本为画面描写;规则如下:不能更改句意，不能忽略，不能编造，要符合逻辑，保留人物姓名，删除人物对话.人物主体根据语义判断使用：一个男人、一个女人、一个男孩、一个女孩、一个小男孩、一个小女孩、一个中年女人、一个中年男人等的词去描述，;主体放在最前面前面，动作描写接在后面，背景或者场景描述放在中间，整体修饰放最后面." +
-    "3.通过上下文本判断，本文段为未来末世，文明倒退，科技衰落，，社会秩序崩溃，弱肉强食，劫掠，废土，平民窟等为主要提示词" +
-    "4.如果描述的只是场景则不需要人物主体描述，也应该区分该段落是处于什么时代的场景并添加相关提示词描述，见第三条。" +
-    "5.根据文本的主体人物体或环境描述，用电影镜头思维判断该画面适合使用那种景别（例如：特写，近景，中景，全景，远景）并添加到提示词" +
-    "6.根据文段环境添，用场景摄影导演思维（例如：景深，灯光氛围,电影镜头质感等）添加进提示词" +
-    "7.生成的提示词要跟句意相符合，不能胡编乱砸 " +
-    "8.你生成的描述词不能超过30个字，请严格遵守" +
-    "以下是几个案例请参考：" +
-    "输入案例:这副机甲已被冰封长达千年之久 输出案例:室外，机甲，巨大机器，机械零件，极地冰川，冰雪掩埋，寒冷，光晕，自然光，光影，投影，全景，景深，电影质感，冷调，锐利光线，未来，科幻" +
-    "输入案例:然而诡异的是，机甲是近二百年才被人类研发出来，那这副机甲又是从哪里来的 输出案例:未来，科幻，工厂，流水线，机械制造，机械；零件，近景，景深，暖调，电影质感，景深，投影，光斑，自然光线，光晕" +
-    "输入案例:采用目前世界上最先进的激光武器溶解冰层，其威力相当于100颗原子弹同时爆炸，结果可想而知 输出案例:巨大爆炸，激光武器，未来，科幻，科幻风格，景深，电影质感，强对比，投影，高光" +
-    "输入案例:带着疑惑，人类联邦政府一致决定 输出案例:室内，会议室，人群开会，决策，未来，高科技，景深，环境光，暖光，电影分镜，电影质感",
-    # 校园
-    "你是一名专业的AI绘画提示词专家，我会给你一句话，你需要根据这句话帮我生成适合AI绘画的提示词，规则如下：" +
-    "1.给你的小说片段的内容再意思不变的情况下丰富性细节,并把他做成有画面感的描述表达" +
-    "2如果是以第一人称视角则转化文本为画面描写;规则如下:不能更改句意，不能忽略，不能编造，要符合逻辑，保留人物姓名，删除人物对话.人物主体根据语义判断使用：一个男人、一个女人、一个男孩、一个女孩、一个小男孩、一个小女孩、一个中年女人、一个中年男人等的词去描述，;主体放在最前面前面，动作描写接在后面，背景或者场景描述放在中间，整体修饰放最后面." +
-    "3.本文段为现代，学校，，学生，校园生活，21世纪20年代等为主要提示词" +
-    "4.文段中包含人物，则根据文段描述人物的穿着，例如：校服服，板鞋，风衣，书包外套符合现代学生的服饰穿搭" +
-    "5.如果描述的只是场景则不需要人物主体描述" +
-    "6.根据文段的文字，请提供相对的场景提示词例如，校园，学校走廊，公园，花丛，庭院，宿舍，图书馆，办公室，教室等" +
-    "7.根据文本的主体人物体或环境描述，用电影镜头思维判断该画面适合使用那种景别（例如：特写，近景，全景，中景，远景）并添加到提示词" +
-    "8.根据文段环境添加氛围描述词例如：暖调，晴朗，光线充足的" +
-    "9.生成的提示词要跟句意相符合，不能胡编乱砸 " +
-    "10.你生成的描述词不能超过60个字，请严格遵守" +
-    "以下是几个案例请参考：" +
-    "输入案例:上午的阳光明晃晃的斜过大大的窗口落在课桌上，外面是高高的白杨树。输出案例:教室，早晨，树木投影，中景，暖调，现代校园，景深，阴影光斑，光晕" +
-    "输入案例:徐羊环顾四周，如果记忆不曾出错的话，那现在正是她升入大学后的第一次班会。输出案例:一个女大学生，穿着休闲上衣和牛仔裤，在教室内环顾四周，，近景，景深，暖调，现代校园，自然光线，光晕" +
-    "输入案例:女方不仅要拿出高达数百万的彩礼。输出案例:一个女人身上穿着都是名贵服饰，周围都是现金，全景，暖调，光线充足" +
-    "输入案例:不管发生了什么你都不会招惹那个最危险的村长。 输出案例:一个中年人村口站着表情严肃，中景，暖调，现代乡下，自然光线",
-    # 通用
-    "你是一名专业的AI绘画提示词专家，我会给你一句话，你需要根据这句话帮我生成适合AI绘画的提示词，规则如下：" +
-    "1.给你的小说片段的内容再意思不变的情况下丰富性细节,并把他做成有画面感的描述表达" +
-    "2需要判断文本所说的背景时间，例如：中国古代，近代，现代,未来等，如果该文段没有明显提示，则可以根据上下文段进行判断" +
-    "3.如果是以第一人称视角则转化文本为画面描写;规则如下:不能更改句意，不能忽略，不能编造，要符合逻辑，保留人物姓名，删除人物对话.人物主体根据语义判断使用：一个男人、一个女人、一个男孩、一个女孩、一个小男孩、一个小女孩、一个中年女人、一个中年男人等的词去描述，;主体放在最前面前面，动作描写接在后面，背景或者场景描述放在中间，整体修饰放最后面." +
-    "4.文段中包含人物，则根据时代背景描述人对应的人物穿着" +
-    "5.如果描述的只是场景则不需要人物主体描述" +
-    "6.根据文段的文字，请提供相对的场景提示词" +
-    "7.根据文本的主体人物体或环境描述，用电影镜头思维判断该画面适合使用那种景别（例如：特写，近景，全景，中景，远景）并添加到提示词" +
-    "8.根据文段环境添加氛围描述词例如：冷调/暖调，晴朗，光线充足的" +
-    "9.生成的提示词要跟句意相符合，不能胡编乱砸 " +
-    "10.你生成的描述词不能超过60个字，请严格遵守" +
-    "以下是几个案例请参考：" +
-    "输入案例:上午的阳光明晃晃的斜过大大的窗口落在课桌上，外面是高高的白杨树。输出案例:教室，早晨，树木投影，中景，暖调，现代校园，景深，阴影光斑，光晕" +
-    "输入案例:徐羊环顾四周，如果记忆不曾出错的话，那现在正是她升入大学后的第一次班会。输出案例:一个女大学生，穿着休闲上衣和牛仔裤，在教室内环顾四周，，近景，景深，暖调，现代校园，自然光线，光晕" +
-    "输入案例:女方不仅要拿出高达数百万的彩礼。输出案例:一个女人身上穿着都是名贵服饰，周围都是现金，全景，暖调，光线充足" +
-    "输入案例:不管发生了什么你都不会招惹那个最危险的村长。 输出案例:一个中年人村口站着表情严肃，中景，暖调，现代乡下，自然光线",
-    # 人物描写+背景
-    "你是一名专业的AI绘画提示词专家，我会给你一句话，你需要根据这句话帮我生成适合AI绘画的提示词，规则如下：" +
-    "1.给你的小说片段的内容再意思不变的情况下，提炼出提示词描述" +
-    "2如果是以第一人称视角则转化文本为画面描写;规则如下:不能更改句意，不能忽略，不能编造，要符合逻辑，保留人物姓名，删除人物对话.人物主体根据语义判断使用：一个男人、一个女人、一个男孩、一个女孩、一个小男孩、一个小女孩、一个中年女人、一个中年男人，一群人，的词去描述，并且描述人物的服装穿着，外貌。" +
-    "3.通过上下文本判断画面中的人物的动作并接在后面" +
-    "4.背景或者场景描述放在最后面" +
-    "5.如果描述的只是场景则不需要人物主体描述" +
-    "6.生成的提示词要跟句意相符合，不能胡编乱砸 " +
-    "7.你生成的描述词不能超过50个字，请严格遵守" +
-    "以下是几个案例请参考：" +
-    "输入案例:上午的阳光明晃晃的斜过大大的窗口落在课桌上，外面是高高的白杨树。输出案例:早晨，校园，教室讲台，树木投影，景深" +
-    "输入案例:徐羊环顾四周，如果记忆不曾出错的话，那现在正是她升入大学后的第一次班会。输出案例:一个女人，头发飘动，穿着休闲上衣和牛仔裤，在教室里，坐在凳子上，手臂放在桌子上，手掌撑着脸。教室，课桌，同学远景，电影质感，自然光线" +
-    "输入案例:捕捉到他的表情，我不可置信地飘到他面前。输出案例:一个女人,悬浮在空中，穿着汉服，头饰，珠宝，丝带，表情吃惊，半身幽灵，古代郊区，景深，电影质感" +
-    "输入案例:可就在此时，一道金属咔嚓咔嚓的声音传来，众人齐齐抬头看去。 输出案例:一群人，齐刷刷的看向镜头，表情好奇，天空，背景模糊" +
-    "输入案例:见到这一幕，旁边的士兵不需要命令，已经子弹上膛，站成一排，抬起冰冷的枪口，对准那刚刚苏醒的男孩。 输出案例:一群士兵们，站成一排，枪口对准男孩，表情凝重 紧张气氛，暴力冲突，光线充足，体积雾，电影质感"
-
-]
-# 正向词
-positive_words_prompts = [
-    "我想让你充当Stable diffusion人工智能程序的提示生成器。你的工作是提供详细的、有创意的描述，以激发 AI 独特而有趣的图像。你会从我提供的语句找到生成画面的关键词，书写格式应遵循基本格式，主体描述 （人物或动物）——人物表情—— 人物动作——  背景或场景描述 —— 综合描述 （包括画风主体、整体氛围、天气季节、灯光光照、镜头角度），如果语句是对话，心理描述，成语，谚语等需要还原成上述基本格式来进行描述，同时要考虑环境场景道具对人物行为的影响，人物主体使用1man，1woman，1boy，1girl，1old woman，1old man等的词去描述。当文本未明确人物主体时，要根据外貌描述，行为举止等来判断人物主体并生成相对应的提示词。"
-    "请注意只需要提取关键词即可，并按照关键词在场景里的重要程度从高到底进行排序且用逗号隔开结尾也用逗号，主体放最前面，动作描写接在后面，背景或者场景描述放在中间，整体修饰放最后面；我给你的主题可能是用中文描述，你给出的提示词只用英文。",
-    "StableDiffusion是一款利用深度学习的文生图模型，支持通过使用提示词来产生新的图像，描述要包含或省略的元素。我在这里引入StableDiffusion算法中的Prompt概念，又被称为提示符。下面的prompt是用来指导AI绘画模型创作图像的。它们包含了图像的各种细节，如人物的外观、背景、颜色和光线效果，以及图像的主题和风格。这些prompt的格式经常包含括号内的加权数字，用于指定某些细节的重要性或强调。例如，\"(masterpiece:1.5)\"表示作品质量是非常重要的，多个括号也有类似作用。此外，如果使用中括号，如\"{blue hair:white hair:0.3}\"，这代表将蓝发和白发加以融合，蓝发占比为0.3。"
-    "以下是用prompt帮助AI模型生成图像的例子：masterpiece,(bestquality),highlydetailed,ultra-detailed,cold,solo,(1girl),(detailedeyes),(shinegoldeneyes),(longliverhair),expressionless,(long sleeves),(puffy sleeves),(white wings),shinehalo,(heavymetal:1.2),(metaljewelry),cross-lacedfootwear (chain),(Whitedoves:1.2) 仿照例子，给出一套详细描述以下内容的prompt。直接开始给出prompt不需要用自然语言描述："
-]
-
-negative_prompts = "EasyNegative,(nsfw:1.5),verybadimagenegative_v1.3, ng_deepnegative_v1_75t, (ugly face:0.8),cross-eyed,sketches, (worst quality:2), (low quality:2), (normal quality:2), lowres, normal quality, ((monochrome)), ((grayscale)), skin spots, acnes, skin blemishes, bad anatomy, DeepNegative, facing away, tilted head, Multiple people, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worstquality, low quality, normal quality, jpegartifacts, signature, watermark, username, blurry, bad feet, cropped, poorly drawn hands, poorly drawn face, mutation, deformed, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, extra fingers, fewer digits, extra limbs, extra arms,extra legs, malformed limbs, fused fingers, too many fingers, long neck, cross-eyed,mutated hands, polar lowres, bad body, bad proportions, gross proportions, text, error, missing fingers, missing arms, missing legs, extra digit, extra arms, extra leg, extra foot, ((repeating hair))"
-
 
 def close_local_model():
     """关闭本地模型进程"""
-    global local_model_process
-    if local_model_process:
-        local_model_process.terminate()
-        local_model_process = None
+    if app_state.local_model_process:
+        app_state.local_model_process.terminate()
+        app_state.local_model_process = None
 
 
 def chat_with_local_model(prompt, model_name="qwen2.5:7b"):
@@ -255,7 +81,7 @@ def chat_with_local_model(prompt, model_name="qwen2.5:7b"):
         payload = {"model": model_name, "prompt": prompt}
 
         # 发送 POST 请求，启用流模式
-        response = requests.post(OLLAMA_URL, json=payload, timeout=30, stream=True)
+        response = requests.post(app_state.OLLAMA_URL, json=payload, timeout=30, stream=True)
         response.raise_for_status()  # 如果HTTP错误，抛出异常
 
         # 逐行解析响应数据
@@ -313,8 +139,7 @@ def process_novel_segments(novel_id, processed_segments):
     cursor = conn.cursor()
     # 处理 novel segments
     if not novel_id:
-        global global_novel_id
-        novel_id = global_novel_id
+        novel_id = app_state.global_novel_id
     # 插入到数据库子表中
     for segment in processed_segments:
         original_description = segment['original_description']
@@ -333,12 +158,12 @@ def process_novel_segments(novel_id, processed_segments):
 
 def chat_with_model(prompt):
     """根据选择调用不同模型"""
-    if use_local_model:
+    if app_state.use_local_model:
         return chat_with_local_model(prompt)
     else:
         # 调用 OpenAI API
         messages = [{"role": "user", "content": prompt}]
-        response = client.chat.completions.create(
+        response = app_state.client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.3,
@@ -348,11 +173,11 @@ def chat_with_model(prompt):
 
 def chat_with_model_keywords(prompt):
     """根据选择调用不同模型"""
-    if use_local_model:
+    if app_state.use_local_model:
         return chat_with_local_model(prompt)
     else:
         messages = [{"role": "user", "content": prompt}]
-        response = client.chat.completions.create(
+        response = app_state.client.chat.completions.create(
             # model="gpt-4",
             model="gpt-3.5-turbo",
             messages=messages,
@@ -383,55 +208,112 @@ def split_novel_into_paragraphs(novel_text, max_paragraph_length):
     paragraphs = []
     current_paragraph = ""
     processed_paragraphs = []
+    if app_state.current_interface == "douyin":
+        sentence_end = "。"
+        for text in novel_text:
+            stripped_text = text.strip()
+            remaining_text = stripped_text
 
-    for text in novel_text:
-        stripped_text = text.strip()
-        remaining_text = stripped_text
+            if len(remaining_text) > 0:
+                remaining_text += sentence_end if not re.search(r'[。！？]$', remaining_text) else ''
+                if len(current_paragraph) + len(remaining_text) <= max_paragraph_length:
+                    current_paragraph += remaining_text
+                else:
+                    paragraphs.append(current_paragraph)
+                    current_paragraph = remaining_text
+        if current_paragraph:
+            paragraphs.append(current_paragraph)
 
-        if len(remaining_text) > 0:
-            remaining_text = remaining_text + "。"
-            if len(current_paragraph) + len(remaining_text) <= max_paragraph_length:
-                current_paragraph += remaining_text
-            else:
-                paragraphs.append(current_paragraph)
-                current_paragraph = remaining_text
+        # 发送固定的提问语句获取返回值
+        fixed_reply = get_replies(app_state.fixed_prompts)
+        if fixed_reply:
+            # 进行下一步操作
+            # 将固定的返回值添加到处理后的段落数组中
+            for index, paragraph in enumerate(paragraphs):
+                start_time = time.time()  # 记录开始时间
+                reply = None
+                while reply is None:
+                    reply = chat_with_model(app_state.fixed_prompts[3] + " 原文: " + paragraph)
+                    if reply is None:
+                        elapsed_time = time.time() - start_time  # 计算已经过去的时间
+                        if elapsed_time >= 4:  # 如果超过4秒，则跳过请求
+                            break
+                        time.sleep(0.5)  # 等待0.5秒后重试
+                if reply is not None:
+                    processed_paragraphs.append(reply)
+                # 更新进度条
+                current_step = index + 1
+                progress = (current_step / len(paragraphs)) * 100 * 0.1
+                app_state.progress_bar['value'] = progress
+                window.update_idletasks()
 
-    if current_paragraph:
-        paragraphs.append(current_paragraph)
+    else:
+        sentence_end = "."
+        max_paragraph_count = 2
+        paragraph_count = 0
+        for text in novel_text:
+            stripped_text = text.strip()
+            remaining_text = stripped_text
 
-    # 发送固定的提问语句获取返回值
-    fixed_reply = get_replies(fixed_prompts)
-    if fixed_reply:
-        # 进行下一步操作
-        # 将固定的返回值添加到处理后的段落数组中
-        for index, paragraph in enumerate(paragraphs):
-            start_time = time.time()  # 记录开始时间
-            reply = None
-            while reply is None:
-                reply = chat_with_model(fixed_prompts[3] + " 原文: " + paragraph)
-                if reply is None:
-                    elapsed_time = time.time() - start_time  # 计算已经过去的时间
-                    if elapsed_time >= 4:  # 如果超过4秒，则跳过请求
-                        break
-                    time.sleep(0.5)  # 等待0.5秒后重试
-            if reply is not None:
-                processed_paragraphs.append(reply)
-            # 更新进度条
-            current_step = index + 1
-            progress = (current_step / len(paragraphs)) * 100 * 0.1
-            progress_bar['value'] = progress
-            window.update_idletasks()
-    return process_return_values(processed_paragraphs)
+            if len(remaining_text) > 0:
+                remaining_text += sentence_end if not re.search(r"[.!?'\']$", remaining_text) else ''
+                if paragraph_count <= max_paragraph_count:
+                    paragraph_count = paragraph_count + 1
+                    current_paragraph += remaining_text
+                else:
+                    paragraphs.append(current_paragraph)
+                    current_paragraph = remaining_text
+                    paragraph_count = 0
+
+        if current_paragraph:
+            paragraphs.append(current_paragraph)
+
+        if paragraphs:
+            # 进行下一步操作
+            # 将固定的返回值添加到处理后的段落数组中
+            for index, paragraph in enumerate(paragraphs):
+                start_time = time.time()  # 记录开始时间
+                reply = None
+                while reply is None:
+                    reply = chat_with_model(app_state.fixed_prompts_tiktok[0] + " 原文如下: " + paragraph)
+                    if reply is None:
+                        elapsed_time = time.time() - start_time  # 计算已经过去的时间
+                        if elapsed_time >= 4:  # 如果超过4秒，则跳过请求
+                            break
+                        time.sleep(0.5)  # 等待0.5秒后重试
+                if reply is not None:
+                    processed_paragraphs.append(reply)
+                # 更新进度条
+                current_step = index + 1
+                progress = (current_step / len(paragraphs)) * 100 * 0.1
+                app_state.progress_bar['value'] = progress
+                window.update_idletasks()
+
+    return process_return_values(processed_paragraphs, paragraphs)
 
 
-def process_return_values(return_values):
+def process_return_values(return_values, paragraphs):
     data = []  # 存储所有组数据的列表
 
-    for group in return_values:
-        group_values = process_paragraphs(group)
-        for group_data in group_values:
-            # 将每组数据添加到列表中
-            data.append(group_data)
+    # 根据不同的业务场景（抖音 vs TikTok）执行不同的处理逻辑
+    if app_state.current_interface == "douyin":
+        # 抖音业务：直接处理段落
+        for group in return_values:
+            group_values = process_paragraphs(group)
+            for group_data in group_values:
+                data.append(group_data)
+    elif app_state.current_interface == "TikTok":
+        # TikTok业务：处理原文和修改后的对照
+        for original, processed in zip(paragraphs, return_values):
+            # 对每一组原文和处理后的段落生成对照
+            data.append({
+                'original_description': original,
+                'visual_description': processed
+            })
+    else:
+        # 如果不在抖音或TikTok业务中，可以处理一个默认逻辑，或者抛出异常
+        raise ValueError("Unsupported interface type")
+
     return data
 
 
@@ -465,24 +347,24 @@ def extract_descriptions(paragraph):
 def load_columns(file_path):
     try:
         df = pd.read_excel(file_path)
-        column_listbox.delete(0, tk.END)
+        app_state.column_listbox.delete(0, tk.END)
         for column in df.columns:
-            column_listbox.insert(tk.END, column)
+            app_state.column_listbox.insert(tk.END, column)
     except Exception as e:
-        status_label.config(text=str(e))
+        app_state.status_label.config(text=str(e))
 
 
 def add_positive_word(output_text):
     # chat_with_model(positive_words_prompts[0])
     total_text = len(output_text)
     current_text = 0
-    if chat_with_model(positive_words_prompts[0]):
+    if chat_with_model(app_state.positive_words_prompts[0]):
         for text in output_text:
-            scene_words = chat_with_model_keywords(scene_words_prompts[5] +
+            scene_words = chat_with_model_keywords(app_state.scene_words_prompts[5] +
                                                    "以下是你需要处理的文本:" +
                                                    text['visual_description'])
             if scene_words is not None:
-                positive_word = chat_with_model_keywords(positive_words_prompts[1] +
+                positive_word = chat_with_model_keywords(app_state.positive_words_prompts[1] +
                                                          "使用英文回复，只需要提取关键词词组(Prompt)用于Stable diffusion绘画，以下是你需要处理的文本,请把关英文键词词组(Prompt)用逗号分割展示出来:" +
                                                          scene_words)
                 text['positive_word'] = "4k,8k,best quality, masterpiece," + positive_word
@@ -490,16 +372,16 @@ def add_positive_word(output_text):
             # 更新进度条
             current_text += 1
             progress = 10 + (current_text / total_text) * 100 * 0.1
-            progress_bar['value'] = progress
+            app_state.progress_bar['value'] = progress
             window.update_idletasks()
     return output_text
 
 
 def process_file():
-    input_file = file_entry.get()
-    selected_columns = [column_listbox.get(index) for index in column_listbox.curselection()]
+    input_file = app_state.file_entry.get()
+    selected_columns = [app_state.column_listbox.get(index) for index in app_state.column_listbox.curselection()]
     if not input_file or not selected_columns:
-        status_label.config(text="请选择文件和要提取的列！")
+        app_state.status_label.config(text="请选择文件和要提取的列！")
         return
     try:
         df = pd.read_excel(input_file)
@@ -508,19 +390,16 @@ def process_file():
             if column in df.columns:
                 output_text += df[column].astype(str) + "\n"
             else:
-                status_label.config(text=f"列 '{column}' 不存在！")
+                app_state.status_label.config(text=f"列 '{column}' 不存在！")
                 return
         # output_text = remove_newlines(output_text)
         # 分割小说文本为段落
-        output_text = split_novel_into_paragraphs(output_text, max_token)
+        output_text = split_novel_into_paragraphs(output_text, app_state.max_token)
         output_text_with_positive_words = add_positive_word(output_text)
-        global global_novel_id
-        process_novel_segments(global_novel_id, output_text_with_positive_words)
+        process_novel_segments(app_state.global_novel_id, output_text_with_positive_words)
         # save_path = filedialog.asksaveasfilename(title="选择保存位置", defaultextension=".txt",filetypes=[("Text Files", "*.txt")])
 
-        global global_novel_name
-        global global_output_file
-        output_folder = os.path.join(global_output_file, global_novel_name)
+        output_folder = os.path.join(app_state.global_output_file, app_state.global_novel_name)
 
         # 创建以小说名命名的文件夹
         folder_counter = 1
@@ -534,43 +413,56 @@ def process_file():
             shutil.rmtree(audio_folder)
         # 创建新的 "mp3" 子文件夹
         os.makedirs(audio_folder)
-        txt_folder = os.path.join(output_folder, f"{global_novel_name}.txt")
+        txt_folder = os.path.join(output_folder, f"{app_state.global_novel_name}.txt")
         with open(txt_folder, 'w', encoding='utf-8') as file:
             # file.write(output_text)
             for text in output_text:
                 file.write(text['original_description'] + '\n')
 
-        global_output_file = output_folder
+        app_state.global_output_file = output_folder
         # 根据当前的音频模型选择合适的音频生成函数
-        if current_audio_model == "gpt_sovits":
+        if app_state.current_audio_model == "gpt_sovits":
             generate_audio_with_gpt_sovits()
         else:
             generate_audio()
         # generate_image()
-        status_label.config(text="处理完成！")
+        app_state.status_label.config(text="处理完成！")
         # 在5秒后调用close_window函数，销毁窗口
         # window.after(5000, close_window)
 
         # import_button.pack()  # 渲染导入剪映按钮
 
     except Exception as e:
-        status_label.config(text=str(e))
+        app_state.status_label.config(text=str(e))
 
 
 def generate_audio_from_text(text):
+    if app_state.current_interface == "Douyin":
+        text_lang = "中文"
+        prompt_lang = "中文"
+        text_split_method = "按中文句号。切"  # 切割文本方式为中文句号
+    elif app_state.current_interface == "TikTok":
+        text_lang = "英文"
+        prompt_lang = "英文"
+        text_split_method = "按英文句号.切"  # 切割文本方式为英文句号
+    else:
+        # 如果当前界面未知或没有设置，则使用默认值
+        text_lang = "中文"
+        prompt_lang = "中文"
+        text_split_method = "按中文句号。切"
     try:
         # 调用 API 生成音频
-        result = gradioclient.predict(
+        result = app_state.gradioclient.predict(
             text=text,  # 需要合成的文本
-            text_lang="英文",  # 需要合成的语言
-            ref_audio_path=gradio_client.handle_file(ref_audio_path),  # 参考音频文件路径
+            text_lang=text_lang,  # 需要合成的语言
+            ref_audio_path=gradio_client.handle_file(app_state.ref_audio_path),  # 参考音频文件路径
             aux_ref_audio_paths=[],
-            prompt_text=prompt_text,  # 可以选择添加提示文本，如果不需要可以为空
-            prompt_lang="英文",  # 参考音频的语言
+            prompt_text=app_state.prompt_text,  # 可以选择添加提示文本，如果不需要可以为空
+            prompt_lang=prompt_lang,  # 参考音频的语言
             top_k=15,  # GPT采样参数
             top_p=1,
             temperature=1,
-            text_split_method="按英文句号.切",  # 切割文本方式
+            text_split_method=text_split_method,  # 切割文本方式
             batch_size=20,
             speed_factor=1,
             ref_text_free=False,  # 是否开启无参考文本模式
@@ -599,47 +491,55 @@ def generate_audio_from_text(text):
 
 
 def generate_audio_with_gpt_sovits():
+    if app_state.current_interface == "Douyin":
+        text_lang = "中文"
+        prompt_language = "中文"
+    elif app_state.current_interface == "TikTok":
+        text_lang = "英文"
+        prompt_language = "英文"
+    else:
+        # 如果当前界面未知或没有设置，则使用默认值
+        text_lang = "中文"
+        prompt_language = "中文"
     try:
-        global ref_audio_path, prompt_text
         # 连接到 SQLite 数据库
         db = sqlite3.connect('novel.db')
         cursor = db.cursor()
 
         # 获取当前小说的记录数量
-        count_query = f"SELECT COUNT(*) FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+        count_query = f"SELECT COUNT(*) FROM novel_scene WHERE novel_id = '{app_state.global_novel_id}'"
         cursor.execute(count_query)
         record_count = cursor.fetchone()[0]
         print(f"记录数量：{record_count}")
 
         # 查询 novel_scene 表中 novel_id 等于 global_novel_id 的场景下的原文
-        query = f"SELECT scene_id, original_description FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+        query = f"SELECT scene_id, original_description FROM novel_scene WHERE novel_id = '{app_state.global_novel_id}'"
         cursor.execute(query)
 
-        output_directory = os.path.join(global_output_file, "mp3")
+        output_directory = os.path.join(app_state.global_output_file, "mp3")
         os.makedirs(output_directory, exist_ok=True)
-        global gradioclient
         # 创建 Gradio 客户端
-        gradioclient = Client("http://localhost:9872/")
+        app_state.gradioclient = Client("http://localhost:9872/")
 
-        change_choices_result = gradioclient.predict(
+        change_choices_result = app_state.gradioclient.predict(
             api_name="/change_choices"
         )
         # 提取 'choices' 中的路径
         choices_1 = [choice[0] for choice in change_choices_result[0]['choices']]
         choices_2 = [choice[0] for choice in change_choices_result[1]['choices']]
 
-        hange_sovits_weights_result = gradioclient.predict(
+        hange_sovits_weights_result = app_state.gradioclient.predict(
             sovits_path=choices_1[1],
-            prompt_language="英文",
-            text_language="英文",
+            prompt_language=prompt_language,
+            text_language=text_lang,
             api_name="/change_sovits_weights"
         )
-        init_t2s_weights_result = gradioclient.predict(
+        init_t2s_weights_result = app_state.gradioclient.predict(
             weights_path=choices_2[1],
             api_name="/init_t2s_weights"
         )
         # 获取参考音频文件路径
-        ref_audio_path = audio_file_entry.get()
+        ref_audio_path = app_state.audio_file_entry.get()
         # 如果是元组类型，强制转换为字符串
         if isinstance(ref_audio_path, tuple):
             ref_audio_path = str(ref_audio_path[0])  # 假设文件路径在元组的第一个位置
@@ -648,12 +548,12 @@ def generate_audio_with_gpt_sovits():
         if not isinstance(ref_audio_path, str):
             print("ref_audio_path 应该是一个有效的字符串路径，但当前值是：{}".format(type(ref_audio_path)))
         # 使用 replace 方法将双引号转为单引号
-        ref_audio_path = ref_audio_path.replace('"', "'")
+        app_state.ref_audio_path = ref_audio_path.replace('"', "'")
         # 获取TXT文件内容
-        txt_file_path = audiotxt_file_entry.get()
+        txt_file_path = app_state.audiotxt_file_entry.get()
         with open(txt_file_path, 'r', encoding='utf-8') as txt_file:
             prompt_text = txt_file.read()  # 读取TXT文件内容
-        prompt_text = prompt_text.replace('"', "'")
+        app_state.prompt_text = prompt_text.replace('"', "'")
         try:
             current_step = 0
             for (scene_id, original_description) in cursor:
@@ -673,7 +573,7 @@ def generate_audio_with_gpt_sovits():
                     # 更新进度条
                     current_step += 1
                     progress = 20 + (current_step / record_count) * 100 * 0.2
-                    progress_bar['value'] = progress
+                    app_state.progress_bar['value'] = progress
                     window.update_idletasks()
                 else:
                     print(f"生成音频失败，场景 {scene_id}")
@@ -703,14 +603,14 @@ def generate_audio():
         db = sqlite3.connect('novel.db')
         # 创建游标
         cursor = db.cursor()
-        count_query = f"SELECT COUNT(*) FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+        count_query = f"SELECT COUNT(*) FROM novel_scene WHERE novel_id = '{app_state.global_novel_id}'"
         cursor.execute(count_query)
         record_count = cursor.fetchone()[0]
         print(f"记录数量：{record_count}")
         # 查询 novel_scene 表中 novel_id 等于 global_novel_id 的场景下的原文
-        query = f"SELECT scene_id, original_description FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+        query = f"SELECT scene_id, original_description FROM novel_scene WHERE novel_id = '{app_state.global_novel_id}'"
         cursor.execute(query)
-        output_directory = os.path.join(global_output_file, "mp3")
+        output_directory = os.path.join(app_state.global_output_file, "mp3")
         os.makedirs(output_directory, exist_ok=True)
         try:
             current_step = 0
@@ -723,7 +623,7 @@ def generate_audio():
                 # 更新进度条
                 current_step = current_step + 1
                 progress = 20 + (current_step / record_count) * 100 * 0.2
-                progress_bar['value'] = progress
+                app_state.progress_bar['value'] = progress
                 window.update_idletasks()
         except Exception as ex:
             # 发生异常，回滚事务
@@ -868,7 +768,7 @@ def call_api(api_endpoint, **payload):
     data = json.dumps(payload).encode('utf-8')
     # data = urllib.parse.urlencode(payload).encode('utf-8')
     requester = urllib.request.Request(
-        f'{webui_server_url}/{api_endpoint}',
+        f'{app_state.webui_server_url}/{api_endpoint}',
         headers={'Content-Type': 'application/json'},
         data=data,
         method='POST'
@@ -917,7 +817,7 @@ def update_image_paths(item, image_directory):
 
 
 def generate_image():
-    out_dir = global_output_file
+    out_dir = app_state.global_output_file
     os.makedirs(out_dir, exist_ok=True)
 
     try:
@@ -925,18 +825,18 @@ def generate_image():
         with sqlite3.connect('novel.db') as db:
             # 创建游标
             cursor = db.cursor()
-            count_query = f"SELECT COUNT(*) FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+            count_query = f"SELECT COUNT(*) FROM novel_scene WHERE novel_id = '{app_state.global_novel_id}'"
             cursor.execute(count_query)
             record_count = cursor.fetchone()[0]
 
             # 查询 novel_scene 表中 novel_id 等于 global_novel_id 的场景下的原文
-            query = f"SELECT scene_id, visual_description, positive_words, negative_words FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+            query = f"SELECT scene_id, visual_description, positive_words, negative_words FROM novel_scene WHERE novel_id = '{app_state.global_novel_id}'"
             cursor.execute(query)
 
             current_step = 0
 
             for (scene_id, visual_description, positive_words, negative_words) in cursor:
-                negative_prompt = negative_prompts if not negative_words else negative_words
+                negative_prompt = app_state.negative_prompts if not negative_words else negative_words
 
                 payload = {
                     "prompt": positive_words,
@@ -952,8 +852,9 @@ def generate_image():
                     "batch_size": 1,
                 }
 
-                if not webui_server_url.startswith("http://localhost") and not webui_server_url.startswith(
-                        "http://127.0.0.1"):
+                if not app_state.webui_server_url.startswith(
+                        "http://localhost") and not app_state.webui_server_url.startswith(
+                    "http://127.0.0.1"):
                     payload["enable_hr"] = "true"
                     payload["hr_upscaler"] = "Latent"
                     payload["hr_scale"] = 2
@@ -968,7 +869,7 @@ def generate_image():
                 # 更新进度条
                 current_step += 1
                 progress = 40 + (current_step / record_count) * 100 * 0.3
-                progress_bar['value'] = progress
+                app_state.progress_bar['value'] = progress
                 window.update_idletasks()
 
         update_image_paths("image_path", out_dir)
@@ -1033,7 +934,7 @@ def process_generated_images(image_directory):
                 # 更新进度条
                 current_image += 1
                 progress = 70 + (current_image / total_images) * 100 * 0.3
-                progress_bar['value'] = progress
+                app_state.progress_bar['value'] = progress
                 window.update_idletasks()
 
     # 关闭游标和数据库连接
@@ -1050,10 +951,10 @@ def import_to_jianying():
             # 创建游标
             cursor = db.cursor()
             # 查询 novel_scene 表中 novel_id 等于 global_novel_id 的场景
-            query = f"SELECT scene_id, original_description, image_path, hr_image_path, audio_path, audio_duration FROM novel_scene WHERE novel_id = '{global_novel_id}'"
+            query = f"SELECT scene_id, original_description, image_path, hr_image_path, audio_path, audio_duration FROM novel_scene WHERE novel_id = '{app_state.global_novel_id}'"
             cursor.execute(query)
 
-            newdraft = Draft(global_novel_name)
+            newdraft = Draft(app_state.global_novel_name)
 
             for (scene_id, original_description, image_path, hr_image_path, audio_path, audio_duration) in cursor:
                 photo = Material(hr_image_path)
@@ -1092,28 +993,27 @@ def import_to_jianying():
 
 # OpenAI API密钥设置按钮
 def set_api_key():
-    api_key = api_key_entry.get()
+    app_state.api_key = app_state.api_key_entry.get()
 
-    if api_key:
+    if app_state.api_key:
         # 在这里将api_key用于设置OpenAI API密钥
         # 将API密钥保存到文件中
         with open("openai_api_key.txt", "w") as api_key_file:
-            api_key_file.write(api_key)
-        global client
-        client = OpenAI(
-            api_key=api_key,
+            api_key_file.write(app_state.api_key)
+        app_state.client = OpenAI(
+            api_key=app_state.api_key,
             base_url='https://api.gpt-ai.live/v1'
         )
 
 
 def toggle_selection(event):
-    selected_item = column_listbox.curselection()
+    selected_item = app_state.column_listbox.curselection()
     if selected_item:
         index = selected_item[0]
-        if column_listbox.selection_includes(index):
-            column_listbox.selection_set(index)
+        if app_state.column_listbox.selection_includes(index):
+            app_state.column_listbox.selection_set(index)
         else:
-            column_listbox.selection_clear(index)
+            app_state.column_listbox.selection_clear(index)
 
 
 def close_window():
@@ -1158,56 +1058,54 @@ button_tiktok.grid(row=0, column=1, padx=20)
 # 切换模型的函数
 def toggle_model_usage():
     """切换模型使用模式"""
-    global use_local_model
-    use_local_model = not use_local_model
+    app_state.use_local_model = not app_state.use_local_model
 
     # 更新模型状态标签
-    model_status_label.config(
-        text=f"当前模型: {'本地模型 (Ollama)' if use_local_model else 'OpenAI API'}"
+    app_state.model_status_label.config(
+        text=f"当前模型: {'本地模型 (Ollama)' if app_state.use_local_model else 'OpenAI API'}"
     )
 
     # 切换时根据模型状态隐藏或显示API密钥设置框
-    if use_local_model:
+    if app_state.use_local_model:
         # 隐藏API密钥设置框
-        api_key_label.grid_forget()
-        api_key_entry.grid_forget()
-        api_key_button.grid_forget()
+        app_state.api_key_label.grid_forget()
+        app_state.api_key_entry.grid_forget()
+        app_state.api_key_button.grid_forget()
     else:
         # 显示API密钥设置框
-        api_key_label.grid(row=2, column=1, padx=5, pady=5)
-        api_key_entry.grid(row=2, column=2, padx=5, pady=5)
-        api_key_button.grid(row=2, column=3, padx=5, pady=5)
+        app_state.api_key_label.grid(row=2, column=1, padx=5, pady=5)
+        app_state.api_key_entry.grid(row=2, column=2, padx=5, pady=5)
+        app_state.api_key_button.grid(row=2, column=3, padx=5, pady=5)
 
 
 # 切换音频模型
 def toggle_audio_model():
-    global current_audio_model
-    if current_audio_model == "pyttsx3":
-        current_audio_model = "gpt_sovits"
-        audio_model_status_label.config(text="当前音频模型: gpt_sovits")
-        audio_file_entry.grid(row=4, column=1, columnspan=2, pady=5)
-        audio_file_button.grid(row=4, column=3, padx=5, pady=5)
-        audiotxt_model_status_label.grid(row=5, column=0, padx=5, pady=5, sticky="w")
-        audiotxt_file_entry.grid(row=5, column=1, columnspan=2, pady=5)
-        audiotxt_file_button.grid(row=5, column=3, padx=5, pady=5, sticky="w")
+    if app_state.current_audio_model == "pyttsx3":
+        app_state.current_audio_model = "gpt_sovits"
+        app_state.audio_model_status_label.config(text="当前音频模型: gpt_sovits")
+        app_state.audio_file_entry.grid(row=4, column=1, columnspan=2, pady=5)
+        app_state.audio_file_button.grid(row=4, column=3, padx=5, pady=5)
+        app_state.audiotxt_model_status_label.grid(row=5, column=0, padx=5, pady=5, sticky="w")
+        app_state.audiotxt_file_entry.grid(row=5, column=1, columnspan=2, pady=5)
+        app_state.audiotxt_file_button.grid(row=5, column=3, padx=5, pady=5, sticky="w")
 
     else:
-        current_audio_model = "pyttsx3"
-        audio_model_status_label.config(text="当前音频模型: pyttsx3")
-        audio_file_entry.grid_forget()
-        audio_file_button.grid_forget()
-        audiotxt_model_status_label.grid_forget()
-        audiotxt_file_entry.grid_forget()
-        audiotxt_file_button.grid_forget()
+        app_state.current_audio_model = "pyttsx3"
+        app_state.audio_model_status_label.config(text="当前音频模型: pyttsx3")
+        app_state.audio_file_entry.grid_forget()
+        app_state.audio_file_button.grid_forget()
+        app_state.audiotxt_model_status_label.grid_forget()
+        app_state.audiotxt_file_entry.grid_forget()
+        app_state.audiotxt_file_button.grid_forget()
 
 
 # 设置API密钥
 def set_api_key():
     # 保存API密钥的逻辑
-    api_key = api_key_entry.get()
+    api_key = app_state.api_key_entry.get()
     with open("openai_api_key.txt", "w") as file:
         file.write(api_key)
-    status_label.config(text="API密钥已保存！")
+    app_state.status_label.config(text="API密钥已保存！")
 
 
 def select_file():
@@ -1216,176 +1114,212 @@ def select_file():
     file_name = os.path.basename(file_path)
     novel_name = os.path.splitext(file_name)[0]
 
-    file_entry.delete(0, tk.END)
-    file_entry.insert(0, file_path)
+    app_state.file_entry.delete(0, tk.END)
+    app_state.file_entry.insert(0, file_path)
     load_columns(file_path)
     # 将小说名称插入主表
-    global global_novel_id
-    global global_novel_name
-    global global_output_file
-    global_novel_name = novel_name
-    global_novel_id = insert_novel_name(novel_name)
-    global_output_file = os.path.dirname(file_path)
+
+    app_state.global_novel_name = novel_name
+    app_state.global_novel_id = insert_novel_name(novel_name)
+    app_state.global_output_file = os.path.dirname(file_path)
 
 
 def select_wav_file():
     """选择WAV文件"""
     file_path = filedialog.askopenfilename(filetypes=[("WAV Files", "*.wav")])
     if file_path:
-        audio_file_entry.delete(0, tk.END)
-        audio_file_entry.insert(0, file_path)
+        app_state.audio_file_entry.delete(0, tk.END)
+        app_state.audio_file_entry.insert(0, file_path)
 
 
 def select_txt_file():
     """选择TXT文件"""
     file_path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
     if file_path:
-        audiotxt_file_entry.delete(0, tk.END)
-        audiotxt_file_entry.insert(0, file_path)
+        app_state.audiotxt_file_entry.delete(0, tk.END)
+        app_state.audiotxt_file_entry.insert(0, file_path)
 
 
 # 本地SD的API配置
 def load_webui_server_url():
-    global webui_server_url
-    global default_webui_server_url
     try:
+        # 尝试读取配置文件中的webui_server_url
         with open('./webui_server_url.txt', 'r') as file:
-            webui_server_url = file.read().strip()
+            app_state.webui_server_url = file.read().strip()
     except FileNotFoundError:
-        webui_server_url = default_webui_server_url
+        # 文件未找到时，使用默认值
+        app_state.webui_server_url = app_state.default_webui_server_url
 
-    if not webui_server_url:
-        webui_server_url = default_webui_server_url
-    # 测试webui_server_url是否联通
+    # 如果没有获取到有效的URL，使用默认URL
+    if not app_state.webui_server_url:
+        app_state.webui_server_url = app_state.default_webui_server_url
+
+    # 测试webui_server_url是否联通，并设置超时保护
     try:
-        response = requests.get(webui_server_url)
+        response = requests.get(app_state.webui_server_url, timeout=5)  # 设置超时5秒
         if response.status_code != 200:
-            webui_server_url = default_webui_server_url
+            # 如果状态码不是200，使用默认URL
+            app_state.webui_server_url = app_state.default_webui_server_url
     except requests.exceptions.RequestException:
-        webui_server_url = default_webui_server_url
-    return webui_server_url
+        # 处理请求异常，如连接超时、DNS解析错误等
+        app_state.webui_server_url = app_state.default_webui_server_url
+    return app_state.webui_server_url
+
+
+# 公共函数：用于添加模型切换按钮、状态标签等
+def add_model_toggle_and_status(frame):
+    # 切换模型按钮
+    app_state.model_toggle_button = tk.Button(frame, text=f"切换文字模型", command=toggle_model_usage,
+                                              font=("Arial", 12),
+                                              relief="solid", width=20)
+    app_state.model_toggle_button.grid(row=1, column=0, columnspan=4, pady=10)
+
+    # 状态标签
+    app_state.model_status_label = tk.Label(frame, text=f"当前文字模型: OpenAI API", font=("Arial", 12), bg="#f0f0f0")
+    app_state.model_status_label.grid(row=2, column=0, padx=5, pady=5, sticky="w")
+
+    # OpenAI API密钥输入框部分，设置它们在同一行显示
+    app_state.api_key_label = tk.Label(frame, text="OpenAI API密钥:", font=("Arial", 12), bg="#f0f0f0")
+    app_state.api_key_label.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+
+    app_state.api_key_entry = tk.Entry(frame, width=40, font=("Arial", 12))
+    app_state.api_key_entry.grid(row=2, column=2, padx=5, pady=5)
+
+    app_state.api_key_button = tk.Button(frame, text="设置API密钥", command=set_api_key, font=("Arial", 12),
+                                         relief="solid", width=20)
+    app_state.api_key_button.grid(row=2, column=3, padx=5, pady=5)
+
+    return app_state.model_status_label
+
+
+def add_audio_toggle_and_status(frame):
+    # 增加切换音频模型按钮
+    app_state.audio_model_toggle_button = tk.Button(frame, text="切换音频模型", command=toggle_audio_model,
+                                                    font=("Arial", 12),
+                                                    relief="solid", width=20)
+    app_state.audio_model_toggle_button.grid(row=3, column=0, columnspan=4, pady=10)
+
+    # 增加状态标签
+    app_state.audio_model_status_label = tk.Label(frame, text="当前音频模型: gpt_sovits", font=("Arial", 12),
+                                                  bg="#f0f0f0")
+    app_state.audio_model_status_label.grid(row=4, column=0, padx=5, pady=5, sticky="w")
+
+    # 音频文件选择部分
+
+    app_state.audio_file_entry = tk.Entry(frame, width=40, font=("Arial", 12))
+    app_state.audio_file_entry.grid(row=4, column=1, columnspan=2, pady=5)
+
+    app_state.audio_file_button = tk.Button(frame, text="选择WAV文件", command=select_wav_file, font=("Arial", 12),
+                                            relief="solid",
+                                            width=20)
+    app_state.audio_file_button.grid(row=4, column=3, padx=5, pady=5, sticky="w")
+    # 增加状态标签
+
+    app_state.audiotxt_model_status_label = tk.Label(frame, text="音频模型参考TXT:", font=("Arial", 12), bg="#f0f0f0")
+    app_state.audiotxt_model_status_label.grid(row=5, column=0, padx=5, pady=5, sticky="w")
+
+    # 音频文件选择部分
+
+    app_state.audiotxt_file_entry = tk.Entry(frame, width=40, font=("Arial", 12))
+    app_state.audiotxt_file_entry.grid(row=5, column=1, columnspan=2, pady=5)
+
+    app_state.audiotxt_file_button = tk.Button(frame, text="选择参考TXT文件", command=select_txt_file,
+                                               font=("Arial", 12),
+                                               relief="solid",
+                                               width=20)
+    app_state.audiotxt_file_button.grid(row=5, column=3, padx=5, pady=5, sticky="w")
+
+    return app_state.audio_model_status_label
+
+
+def add_file_select_and_column_select(frame):
+    # 文件选择部分
+    app_state.file_label = tk.Label(frame, text="选择要处理的文件:", font=("Arial", 12), bg="#f0f0f0")
+    app_state.file_label.grid(row=6, column=0, padx=5, pady=5, sticky="w")
+
+    app_state.file_entry = tk.Entry(frame, width=40, font=("Arial", 12))
+    app_state.file_entry.grid(row=6, column=1, columnspan=2, pady=5)
+
+    app_state.file_button = tk.Button(frame, text="选择文件", command=select_file, font=("Arial", 12), relief="solid",
+                                      width=20)
+    app_state.file_button.grid(row=6, column=3, padx=5, pady=5)
+
+    # 列选择部分
+    app_state.columns_label = tk.Label(frame, text="选择要提取的列（多选）:", font=("Arial", 12), bg="#f0f0f0")
+    app_state.columns_label.grid(row=7, column=0, padx=5, pady=5, sticky="w")
+
+    app_state.column_listbox = tk.Listbox(frame, selectmode=tk.MULTIPLE, font=("Arial", 12))
+    app_state.column_listbox.grid(row=7, column=1, columnspan=2, pady=10)  # 使用columnspan横跨3列
+
+    app_state.column_listbox.bind('<<ListboxSelect>>', toggle_selection)
+
+    return app_state.file_entry, app_state.file_button, app_state.column_listbox
+
+
+def add_progress_bar_and_process_button(frame):
+    # 进度条
+    app_state.progress_label = tk.Label(frame, text="处理进度:", font=("Arial", 12), bg="#f0f0f0")
+    app_state.progress_label.grid(row=8, column=0, padx=5, pady=5, sticky="w")
+
+    app_state.progress_bar = ttk.Progressbar(frame, length=300, mode='determinate')
+    app_state.progress_bar.grid(row=8, column=1, columnspan=2, pady=10)  # 使用columnspan横跨3列
+
+    # 处理按钮
+    app_state.process_button = tk.Button(frame, text="处理文件", command=process_file, font=("Arial", 12),
+                                         relief="solid",
+                                         width=20)
+    app_state.process_button.grid(row=9, column=0, columnspan=4, pady=20)  # 横跨4列
+
+    # 状态标签
+    app_state.status_label = tk.Label(frame, text="状态信息", font=("Arial", 12), bg="#f0f0f0")
+    app_state.status_label.grid(row=10, column=0, columnspan=4, pady=5)  # 横跨4列
+
+    return app_state.progress_bar, app_state.process_button, app_state.status_label
+
+
+# 页面显示函数，减少重复代码
+def show_page(frame, model_name, page_title):
+    # 显示欢迎标签
+    label = tk.Label(frame, text=page_title, font=("Arial", 20, "bold"), bg="#f0f0f0")
+    label.grid(row=0, column=0, columnspan=4, pady=20)
+    # 添加模型切换和状态标签
+    app_state.model_status_label = add_model_toggle_and_status(frame)
+    # 添加音频模型切换和状态标签
+    app_state.audio_model_status_label = add_audio_toggle_and_status(frame)
+    # 添加文件选择和列选择功能
+    app_state.file_entry, app_state.file_button, app_state.column_listbox = add_file_select_and_column_select(frame)
+    # 添加进度条和处理按钮
+    app_state.progress_bar, app_state.process_button, app_state.status_label = add_progress_bar_and_process_button(
+        frame)
+    return app_state.model_status_label, app_state.audio_model_status_label, app_state.file_entry, app_state.file_button, app_state.column_listbox, app_state.progress_bar, app_state.process_button, app_state.status_label
 
 
 # 抖音页面内容
 def show_douyin():
+    app_state.current_interface = "Douyin"
     load_webui_server_url()
-    frame_douyin.grid_forget()  # 默认不显示抖音页面
-    frame_tiktok.grid_forget()  # 默认不显示TikTok页面
-    frame_douyin.grid(row=0, column=0, sticky="nsew")  # 显示抖音页面
+    frame_douyin.grid_forget()
+    frame_tiktok.grid_forget()
+    frame_douyin.grid(row=0, column=0, sticky="nsew")
+    # 调用通用页面显示函数
+    app_state.model_status_label, app_state.audio_model_status_label, app_state.file_entry, app_state.file_button, app_state.column_listbox, app_state.progress_bar, app_state.process_button, app_state.status_label = show_page(
+        frame_douyin, "Douyin", "抖音业务页面！")
 
-    # 显示欢迎标签
-    label_douyin = tk.Label(frame_douyin, text="抖音业务页面！", font=("Arial", 20, "bold"), bg="#f0f0f0")
-    label_douyin.grid(row=0, column=0, columnspan=4, pady=20)  # 让欢迎标签横跨4列
-
-    # 增加切换模型按钮
-    model_toggle_button = tk.Button(frame_douyin, text="切换文字模型", command=toggle_model_usage, font=("Arial", 12),
-                                    relief="solid", width=20)
-    model_toggle_button.grid(row=1, column=0, columnspan=4, pady=10)  # 让切换按钮横跨4列
-
-    # 增加状态标签
-    global model_status_label
-    model_status_label = tk.Label(frame_douyin, text="当前文字模型: OpenAI API", font=("Arial", 12), bg="#f0f0f0")
-    model_status_label.grid(row=2, column=0, padx=5, pady=5, sticky="w")
-
-    # OpenAI API密钥输入框部分，设置它们在同一行显示
-    global api_key_label
-    api_key_label = tk.Label(frame_douyin, text="OpenAI API密钥:", font=("Arial", 12), bg="#f0f0f0")
-    api_key_label.grid(row=2, column=1, padx=5, pady=5, sticky="w")
-
-    global api_key_entry
-    api_key_entry = tk.Entry(frame_douyin, width=40, font=("Arial", 12))
-    api_key_entry.grid(row=2, column=2, padx=5, pady=5)
-
-    global api_key_button
-    api_key_button = tk.Button(frame_douyin, text="设置API密钥", command=set_api_key, font=("Arial", 12),
-                               relief="solid", width=20)
-    api_key_button.grid(row=2, column=3, padx=5, pady=5)
-
-    # 增加切换音频模型按钮
-    audio_model_toggle_button = tk.Button(frame_douyin, text="切换音频模型", command=toggle_audio_model,
-                                          font=("Arial", 12),
-                                          relief="solid", width=20)
-    audio_model_toggle_button.grid(row=3, column=0, columnspan=4, pady=10)
-
-    # 增加状态标签
-    global audio_model_status_label
-    audio_model_status_label = tk.Label(frame_douyin, text="当前音频模型: gpt_sovits", font=("Arial", 12), bg="#f0f0f0")
-    audio_model_status_label.grid(row=4, column=0, padx=5, pady=5, sticky="w")
-
-    # 音频文件选择部分
-    global audio_file_entry
-    audio_file_entry = tk.Entry(frame_douyin, width=40, font=("Arial", 12))
-    audio_file_entry.grid(row=4, column=1, columnspan=2, pady=5)
-    global audio_file_button
-    audio_file_button = tk.Button(frame_douyin, text="选择WAV文件", command=select_wav_file, font=("Arial", 12),
-                                  relief="solid",
-                                  width=20)
-    audio_file_button.grid(row=4, column=3, padx=5, pady=5, sticky="w")
-    # 增加状态标签
-    global audiotxt_model_status_label
-    audiotxt_model_status_label = tk.Label(frame_douyin, text="音频模型参考TXT:", font=("Arial", 12), bg="#f0f0f0")
-    audiotxt_model_status_label.grid(row=5, column=0, padx=5, pady=5, sticky="w")
-
-    # 音频文件选择部分
-    global audiotxt_file_entry
-    audiotxt_file_entry = tk.Entry(frame_douyin, width=40, font=("Arial", 12))
-    audiotxt_file_entry.grid(row=5, column=1, columnspan=2, pady=5)
-    global audiotxt_file_button
-    audiotxt_file_button = tk.Button(frame_douyin, text="选择参考TXT文件", command=select_txt_file, font=("Arial", 12),
-                                     relief="solid",
-                                     width=20)
-    audiotxt_file_button.grid(row=5, column=3, padx=5, pady=5, sticky="w")
-
-    # 文件选择部分
-    file_label = tk.Label(frame_douyin, text="选择要处理的文件:", font=("Arial", 12), bg="#f0f0f0")
-    file_label.grid(row=6, column=0, padx=5, pady=5, sticky="w")
-
-    global file_entry
-    file_entry = tk.Entry(frame_douyin, width=40, font=("Arial", 12))
-    file_entry.grid(row=6, column=1, columnspan=2, pady=5)
-
-    file_button = tk.Button(frame_douyin, text="选择文件", command=select_file, font=("Arial", 12), relief="solid",
-                            width=20)
-    file_button.grid(row=6, column=3, padx=5, pady=5)
-
-    # 列选择部分
-    columns_label = tk.Label(frame_douyin, text="选择要提取的列（多选）:", font=("Arial", 12), bg="#f0f0f0")
-    columns_label.grid(row=7, column=0, padx=5, pady=5, sticky="w")
-
-    global column_listbox
-    column_listbox = tk.Listbox(frame_douyin, selectmode=tk.MULTIPLE, font=("Arial", 12))
-    column_listbox.grid(row=7, column=1, columnspan=2, pady=10)  # 使用columnspan横跨3列
-
-    column_listbox.bind('<<ListboxSelect>>', toggle_selection)
-
-    # 进度条
-    progress_label = tk.Label(frame_douyin, text="处理进度:", font=("Arial", 12), bg="#f0f0f0")
-    progress_label.grid(row=8, column=0, padx=5, pady=5, sticky="w")
-
-    global progress_bar
-    progress_bar = ttk.Progressbar(frame_douyin, length=300, mode='determinate')
-    progress_bar.grid(row=8, column=1, columnspan=2, pady=10)  # 使用columnspan横跨3列
-
-    # 处理按钮
-    process_button = tk.Button(frame_douyin, text="处理文件", command=process_file, font=("Arial", 12), relief="solid",
-                               width=20)
-    process_button.grid(row=9, column=0, columnspan=4, pady=20)  # 横跨4列
-
-    # 状态标签
-    global status_label
-    status_label = tk.Label(frame_douyin, text="状态信息", font=("Arial", 12), bg="#f0f0f0")
-    status_label.grid(row=10, column=0, columnspan=4, pady=5)  # 横跨4列
+    # 可以在这里添加特定于抖音的额外功能
 
 
 # TikTok页面内容
 def show_tiktok():
-    frame_douyin.grid_forget()  # 默认不显示抖音页面
-    frame_tiktok.grid_forget()  # 默认不显示TikTok页面
-    frame_tiktok.grid(row=0, column=0, sticky="nsew")  # 显示抖音页面
+    app_state.current_interface = "TikTok"
+    load_webui_server_url()
+    frame_douyin.grid_forget()
+    frame_tiktok.grid_forget()
+    frame_tiktok.grid(row=0, column=0, sticky="nsew")
+    # 调用通用页面显示函数
+    app_state.model_status_label, app_state.audio_model_status_label, app_state.file_entry, app_state.file_button, app_state.column_listbox, app_state.progress_bar, app_state.process_button, app_state.status_label = show_page(
+        frame_tiktok, "TikTok", "TikTok业务页面！")
 
-    # 显示欢迎标签
-    label_tiktok = tk.Label(frame_tiktok, text="TikTok业务页面！", font=("Arial", 20, "bold"), bg="#f0f0f0")
-    label_tiktok.grid(row=0, column=0, columnspan=4, pady=20)  # 让欢迎标签横跨4列
+    # 可以在这里添加特定于TikTok的额外功能
 
 
 # 切换页面的函数
