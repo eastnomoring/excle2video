@@ -59,7 +59,7 @@ class AppState:
             "请注意输出格式改为成组的原文描述对应画面描述，将原文跟据场景或语境（若干句）分组：第n组：原文描述：原文…… 画面描述：根据原文句子创做的剧情内容…… 等等 ，要根据原文分组，不要缩减原文内容。如果你理解了这一要求，请确认并记住输出格式，然后等待我给你发送小说文本，按照输出格式输出"
         ]
         self.fixed_prompts_tiktok = [
-            "I would like you to create a scene based on the description from the original English novel. Add missing or implied details such as characters' appearance, clothing, emotions, physical movements, setting (time, weather, location), and perspective. Ensure the scene feels complete and rich without overdoing it. Describe through the language of the camera, using a concise, immersive style. I will send the original text, please respond in English.",
+            "I would like you to create a scene based on the description from the original English novel. Add missing or implied details such as characters' appearance, clothing, emotions, physical movements, setting (time, weather, location), and perspective. Ensure the scene is no more than three sentences, feeling both complete and rich without overdoing it. Describe through the language of the camera, using a concise, immersive style. I will send the original text, please respond in English.",
         ]
         # 场景词
         self.scene_words_prompts = [

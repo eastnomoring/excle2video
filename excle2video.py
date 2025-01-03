@@ -77,34 +77,36 @@ def close_local_model():
 
 def chat_with_local_model(prompt, model_name="qwen2.5:7b"):
     try:
-        # 请求体
         payload = {"model": model_name, "prompt": prompt}
-
-        # 发送 POST 请求，启用流模式
         response = requests.post(app_state.OLLAMA_URL, json=payload, timeout=30, stream=True)
-        response.raise_for_status()  # 如果HTTP错误，抛出异常
 
-        # 逐行解析响应数据
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        print(f"[{timestamp}] Response status code: {response.status_code}")
+
+        response.raise_for_status()  # 检查HTTP错误
         result_content = []
+
         for line in response.iter_lines():
             if line.strip():  # 跳过空行
                 try:
                     json_data = json.loads(line.decode("utf-8"))
-                    result_content.append(json_data.get("response", ""))
+                    response_text = json_data.get("response", "")
+                    if response_text:
+                        result_content.append(response_text)
 
-                    # 如果是结束标志，停止处理
-                    if json_data.get("done", False):
+                    if json_data.get("done", False):  # 结束条件
                         break
                 except json.JSONDecodeError:
                     return "解析本地模型响应时发生错误"
 
-        # 拼接所有响应内容
         return "".join(result_content) if result_content else "本地模型返回了空内容"
 
     except requests.exceptions.RequestException as e:
         return f"本地模型请求失败: {e}"
-    except ValueError:
-        return "本地模型返回了无效的JSON格式数据"
+
+    finally:
+        if 'response' in locals():
+            response.close()  # 确保关闭连接，释放资源
 
 
 def submit_post(url: str, data: dict):
