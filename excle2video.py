@@ -774,8 +774,8 @@ def call_api(api_endpoint, **payload):
         method='POST'
     )
     try:
-        response = urllib.request.urlopen(requester)
-        return json.loads(response.read().decode('utf-8'))
+        with urllib.request.urlopen(requester) as response:
+            return json.loads(response.read().decode('utf-8'))
     except error.URLError as ex:
         print(f"出现异常：{ex}")
 
@@ -966,8 +966,23 @@ def import_to_jianying():
 
                 word_count = len(original_description)
                 average_time_per_word = int(audio_duration) / word_count
-                sentences = original_description.split("。")
-                sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+                # sentences = original_description.split("。")
+                #sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+                sentences = []
+
+                # 根据 current_interface 判断句子的分割方式
+                if app_state.current_interface == "douyin":
+                    # 对于抖音，按中文句号“。”分割
+                    sentences = [sentence.strip() for sentence in original_description.split("。") if sentence.strip()]
+                elif app_state.current_interface == "TikTok":
+                    # 对于 TikTok，按所有英文标点符号分割
+                    sentences = [sentence.strip() for sentence in re.split(r'[.!?;:]+', original_description) if
+                                 sentence.strip()]
+                else:
+                    # 对其他接口的处理，默认按英文标点分割
+                    sentences = [sentence.strip() for sentence in re.split(r'[.!?;:]+', original_description) if
+                                 sentence.strip()]
+
                 total_duration = 0
 
                 for i, sentence in enumerate(sentences):
