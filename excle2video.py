@@ -75,7 +75,7 @@ def close_local_model():
         app_state.local_model_process = None
 
 
-def chat_with_local_model(prompt, model_name="qwen2.5:7b"):
+def chat_with_local_model(prompt, model_name="deepseek-r1:32b"):
     try:
         payload = {"model": model_name, "prompt": prompt}
         response = requests.post(app_state.OLLAMA_URL, json=payload, timeout=30, stream=True)
@@ -83,30 +83,39 @@ def chat_with_local_model(prompt, model_name="qwen2.5:7b"):
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         print(f"[{timestamp}] Response status code: {response.status_code}")
 
-        response.raise_for_status()  # 检查HTTP错误
+        response.raise_for_status()
         result_content = []
 
         for line in response.iter_lines():
-            if line.strip():  # 跳过空行
+            if line.strip():
                 try:
                     json_data = json.loads(line.decode("utf-8"))
                     response_text = json_data.get("response", "")
                     if response_text:
                         result_content.append(response_text)
 
-                    if json_data.get("done", False):  # 结束条件
+                    if json_data.get("done", False):
                         break
                 except json.JSONDecodeError:
                     return "解析本地模型响应时发生错误"
 
-        return "".join(result_content) if result_content else "本地模型返回了空内容"
+        # 合并内容后去除思考链
+        full_content = "".join(result_content)
+        processed_content = re.sub(
+            r'<think>.*?</think>',  # 非贪婪匹配
+            '',
+            full_content,
+            flags=re.DOTALL  # 允许.匹配换行符
+        ).strip()
+
+        return processed_content if processed_content else "本地模型返回了空内容"
 
     except requests.exceptions.RequestException as e:
         return f"本地模型请求失败: {e}"
 
     finally:
         if 'response' in locals():
-            response.close()  # 确保关闭连接，释放资源
+            response.close()
 
 
 def submit_post(url: str, data: dict):
@@ -158,34 +167,77 @@ def process_novel_segments(novel_id, processed_segments):
     conn.close()
 
 
-def chat_with_model(prompt):
+def chat_with_model(user_prompt, system_prompt=None):
     """根据选择调用不同模型"""
     if app_state.use_local_model:
-        return chat_with_local_model(prompt)
+        return chat_with_local_model(user_prompt, system_prompt)
     else:
-        # 调用 OpenAI API
-        messages = [{"role": "user", "content": prompt}]
-        response = app_state.client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            temperature=0.3,
-        )
-        return response.choices[0].message.content
+        # 构建消息列表（支持动态系统消息）
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+
+        try:
+            response = app_state.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1024,
+                stream=True
+            )
+
+            # 流式响应处理
+            full_response = []
+            for chunk in response:
+                if chunk.choices[0].delta.content:
+                    full_response.append(chunk.choices[0].delta.content)
+            return "".join(full_response)
+
+        except Exception as e:
+            return handle_deepseek_error(e)
 
 
-def chat_with_model_keywords(prompt):
+def handle_deepseek_error(e):
+    error_mapping = {
+        401: "无效API密钥，请检查控制台",
+        429: "请求过于频繁，请稍后重试",
+        500: "服务器内部错误，请联系技术支持"
+    }
+    if hasattr(e, 'status_code'):
+        return f"DeepSeek API错误: {error_mapping.get(e.status_code, '未知错误')}"
+    return f"网络连接异常: {str(e)}"
+
+
+def chat_with_model_keywords(user_prompt, system_prompt=None):
     """根据选择调用不同模型"""
     if app_state.use_local_model:
-        return chat_with_local_model(prompt)
+        return chat_with_local_model(user_prompt, system_prompt)
     else:
-        messages = [{"role": "user", "content": prompt}]
-        response = app_state.client.chat.completions.create(
-            # model="gpt-4",
-            model="gpt-3.5-turbo",
-            messages=messages,
-            temperature=0.5,
-        )
-        return response.choices[0].message.content
+        # 构建消息列表（支持动态系统消息）
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+
+        try:
+            response = app_state.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1024,
+                stream=True
+            )
+
+            # 流式响应处理
+            full_response = []
+            for chunk in response:
+                if chunk.choices[0].delta.content:
+                    full_response.append(chunk.choices[0].delta.content)
+            return "".join(full_response)
+
+        except Exception as e:
+            return handle_deepseek_error(e)
 
 
 def get_replies(prompts):
@@ -194,7 +246,7 @@ def get_replies(prompts):
         start_time = time.time()  # 记录开始时间
         reply = None
         while reply is None:
-            reply = chat_with_model(prompt)
+            reply = chat_with_model("", prompt)
             if reply is None:
                 elapsed_time = time.time() - start_time  # 计算已经过去的时间
                 if elapsed_time >= 3:  # 如果超过3秒，则跳过请求
@@ -230,12 +282,12 @@ def split_novel_into_paragraphs(novel_text, max_paragraph_length):
         fixed_reply = get_replies(app_state.fixed_prompts)
         if fixed_reply:
             # 进行下一步操作
-            # 将固定的返回值添加到处理后的段落数组中
+            # 将固定返回值添加到处理后的段落数组中
             for index, paragraph in enumerate(paragraphs):
                 start_time = time.time()  # 记录开始时间
                 reply = None
                 while reply is None:
-                    reply = chat_with_model(app_state.fixed_prompts[3] + " 原文: " + paragraph)
+                    reply = chat_with_model(app_state.fixed_prompts[3], " 原文: " + paragraph)
                     if reply is None:
                         elapsed_time = time.time() - start_time  # 计算已经过去的时间
                         if elapsed_time >= 4:  # 如果超过4秒，则跳过请求
@@ -272,24 +324,26 @@ def split_novel_into_paragraphs(novel_text, max_paragraph_length):
 
         if paragraphs:
             # 进行下一步操作
-            # 将固定的返回值添加到处理后的段落数组中
-            for index, paragraph in enumerate(paragraphs):
-                start_time = time.time()  # 记录开始时间
-                reply = None
-                while reply is None:
-                    reply = chat_with_model(app_state.fixed_prompts_tiktok[0] + " 原文如下: " + paragraph)
-                    if reply is None:
-                        elapsed_time = time.time() - start_time  # 计算已经过去的时间
-                        if elapsed_time >= 4:  # 如果超过4秒，则跳过请求
-                            break
-                        time.sleep(0.5)  # 等待0.5秒后重试
-                if reply is not None:
-                    processed_paragraphs.append(reply)
-                # 更新进度条
-                current_step = index + 1
-                progress = (current_step / len(paragraphs)) * 100 * 0.1
-                app_state.progress_bar['value'] = progress
-                window.update_idletasks()
+            # 将固定返回值添加到处理后的段落数组中
+            fixed_reply = chat_with_model('', app_state.fixed_prompts_tiktok[0])
+            if fixed_reply:
+                for index, paragraph in enumerate(paragraphs):
+                    start_time = time.time()  # 记录开始时间
+                    reply = None
+                    while reply is None:
+                        reply = chat_with_model(" 原文如下: " + paragraph, app_state.fixed_prompts_tiktok[0])
+                        if reply is None:
+                            elapsed_time = time.time() - start_time  # 计算已经过去的时间
+                            if elapsed_time >= 4:  # 如果超过4秒，则跳过请求
+                                break
+                            time.sleep(0.5)  # 等待0.5秒后重试
+                    if reply is not None:
+                        processed_paragraphs.append(reply)
+                    # 更新进度条
+                    current_step = index + 1
+                    progress = (current_step / len(paragraphs)) * 100 * 0.1
+                    app_state.progress_bar['value'] = progress
+                    window.update_idletasks()
 
     return process_return_values(processed_paragraphs, paragraphs)
 
@@ -360,15 +414,12 @@ def add_positive_word(output_text):
     # chat_with_model(positive_words_prompts[0])
     total_text = len(output_text)
     current_text = 0
-    if chat_with_model(app_state.positive_words_prompts[0]):
+    if chat_with_model('', app_state.positive_words_prompts[0]):
         for text in output_text:
-            scene_words = chat_with_model_keywords(app_state.scene_words_prompts[5] +
-                                                   "以下是你需要处理的文本:" +
-                                                   text['visual_description'])
+            scene_words = chat_with_model_keywords("以下是你需要处理的文本:" + text['visual_description'],
+                                                   app_state.scene_words_prompts[5])
             if scene_words is not None:
-                positive_word = chat_with_model_keywords(app_state.positive_words_prompts[1] +
-                                                         "使用英文回复，只需要提取关键词词组(Prompt)用于Stable diffusion绘画，以下是你需要处理的文本,请把关英文键词词组(Prompt)用逗号分割展示出来:" +
-                                                         scene_words)
+                positive_word = chat_with_model_keywords(scene_words, app_state.positive_words_prompts[0])
                 text['positive_word'] = "4k,8k,best quality, masterpiece," + positive_word
 
             # 更新进度条
@@ -969,7 +1020,7 @@ def import_to_jianying():
                 word_count = len(original_description)
                 average_time_per_word = int(audio_duration) / word_count
                 # sentences = original_description.split("。")
-                #sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+                # sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
                 sentences = []
 
                 # 根据 current_interface 判断句子的分割方式
@@ -1013,13 +1064,12 @@ def set_api_key():
     app_state.api_key = app_state.api_key_entry.get()
 
     if app_state.api_key:
-        # 在这里将api_key用于设置OpenAI API密钥
-        # 将API密钥保存到文件中
-        with open("openai_api_key.txt", "w") as api_key_file:
-            api_key_file.write(app_state.api_key)
+        with open(".env", "w") as f:
+            f.write(f"DEEPSEEK_API_KEY={app_state.api_key}")
+        os.environ["DEEPSEEK_API_KEY"] = app_state.api_key
         app_state.client = OpenAI(
-            api_key=app_state.api_key,
-            base_url='https://api.gpt-ai.live/v1'
+            base_url="https://api.deepseek.com",
+            api_key=app_state.api_key
         )
 
 
@@ -1118,11 +1168,18 @@ def toggle_audio_model():
 
 # 设置API密钥
 def set_api_key():
-    # 保存API密钥的逻辑
-    api_key = app_state.api_key_entry.get()
-    with open("openai_api_key.txt", "w") as file:
-        file.write(api_key)
-    app_state.status_label.config(text="API密钥已保存！")
+    entered_key = app_state.api_key_entry.get()
+    if entered_key:
+        # 更新环境变量
+        os.environ["DEEPSEEK_API_KEY"] = entered_key
+        # 更新客户端实例
+        app_state.client = OpenAI(
+            base_url="https://api.deepseek.com/",
+            api_key=entered_key
+        )
+        # 保存到文件（可选）
+        with open("deepseek_api_key.txt", "w") as f:
+            f.write(entered_key)
 
 
 def select_file():
@@ -1202,9 +1259,22 @@ def add_model_toggle_and_status(frame):
     app_state.api_key_entry = tk.Entry(frame, width=40, font=("Arial", 12))
     app_state.api_key_entry.grid(row=2, column=2, padx=5, pady=5)
 
+    # 设置默认值（新增代码）
+    try:
+        with open('deepseek_api_key.txt', 'r') as f:
+            default_key = f.read().strip()
+    except FileNotFoundError:
+        default_key = os.getenv("DEEPSEEK_API_KEY", "")
+    app_state.api_key_entry.insert(0, default_key)  # 插入默认值
+
     app_state.api_key_button = tk.Button(frame, text="设置API密钥", command=set_api_key, font=("Arial", 12),
                                          relief="solid", width=20)
     app_state.api_key_button.grid(row=2, column=3, padx=5, pady=5)
+    # 如果初始状态是本地模型，主动隐藏组件
+    if app_state.use_local_model:
+        app_state.api_key_label.grid_remove()
+        app_state.api_key_entry.grid_remove()
+        app_state.api_key_button.grid_remove()
 
     return app_state.model_status_label
 
